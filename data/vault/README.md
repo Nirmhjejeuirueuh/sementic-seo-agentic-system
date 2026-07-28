@@ -15,20 +15,18 @@ top of ordinary markdown files.
 ## Folder layout
 
 ```
-products/     one note per sellable item        (type: Product)
-styles/       the art style                      (type: FigurineStyle)
-types/        what the figurine is OF             (type: FigurineType)
-occasions/    the gifting / life event            (type: Occasion)
-formats/      the physical form                   (type: Format)   -- empty for now
-recipients/   who it's a gift for                  (type: Recipient) -- empty for now
-accessories/  add-ons                              (type: Accessory) -- empty for now
+products/     one note per sellable item        (type: Product)      37
+styles/       the art style                      (type: FigurineStyle) 6
+types/        what the figurine is OF             (type: FigurineType) 12
+occasions/    the gifting / life event            (type: Occasion)    15
+formats/      the physical form                   (type: Format)       3
+recipients/   who it's a gift for                  (type: Recipient)    9
+accessories/  add-ons                              (type: Accessory)    0
 ```
 
-Only `products/`, `styles/`, `types/`, and `occasions/` are populated in
-this first pass. `formats/`, `recipients/`, and `accessories/` are
-scaffolded but empty — we add them once we scale past the first 5
-products (several later products in the source document use
-Format/Recipient signals that these don't yet).
+`accessories/` is deliberately still empty: no product in the source
+document states that a figurine pairs with a specific accessory, so
+there is nothing true to tag yet. The folder is scaffolded and waiting.
 
 ---
 
@@ -60,6 +58,32 @@ Seasonal spike Oct–Dec — the single biggest gifting window of the year.
   what makes content gaps visible directly in the graph.
 - `source_section` — which part of `getfiguro-seo-knowledge-base.md`
   the fact came from. Keeps every claim traceable back to the source.
+- `aliases` — optional. Other words a **customer** would type for this
+  same thing.
+
+#### On `aliases` — small field, large effect
+
+The `title` is what the business calls something. `aliases` are what
+people actually search for, and the two are often different words:
+
+```yaml
+title: Sports
+aliases: [football, cricket, golfer, golf, basketball, soccer, athlete]
+```
+
+Nobody searches "sports figurine" — they search "football figurine".
+Without the alias the keyword join simply misses, because the only thing
+it can match on is the title. Adding aliases to 8 notes moved the join
+from **55% to 76% coverage**, at no cost to precision.
+
+Rules for adding one:
+- It must be a genuine synonym or a specific instance of the concept
+  (`nurse` for Profession — yes; `portrait` for Bust — no, a portrait
+  figurine is not necessarily a bust).
+- Do not add an alias to widen a match you merely *hope* is right. A
+  wrong alias creates a wrong edge for every keyword containing it.
+- Matching is whole-word and tolerates a simple plural, so `award`
+  already catches `awards`. You don't need both.
 
 ### 2. Product notes (`products/`)
 

@@ -3,6 +3,7 @@ type: Product
 title: Personalized Couple Figurine (Anniversary)
 url: /products/personalized-anniversary-couple-gift
 status: existing
+aliases: [couple figurine, couple statue]
 styles: []
 types: []
 occasions: [Anniversary]

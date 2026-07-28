@@ -1,6 +1,6 @@
 # Progress Tracker
 
-Last updated: **2026-07-27**
+Last updated: **2026-07-28**
 
 A plain-language view of what is done, what is next, and what is blocking.
 For the technical detail behind each change, see `CHANGELOG.md`.
@@ -22,10 +22,11 @@ figurine domain.
 | 2 | A domain schema that fits Getfiguro | ✅ **Done** |
 | 3 | The knowledge base, authored in Obsidian | ✅ **Done — full 37-product catalogue** |
 | 4 | Ingest the vault into the graph | ✅ **Done &amp; verified** |
-| 5 | Keywords + the join | ⬜ Not started |
-| 6 | Topic clusters (Louvain) | ⬜ Not started |
-| 7 | Site structure & sitemap.xml | ⬜ Not started |
-| 8 | The page-writing agent | ⬜ Not started |
+| 4b | Deploy a copy to DigitalOcean | ✅ **Done** |
+| 5 | Keywords + intent + the join | ✅ **Done — 76.2% coverage** |
+| 6 | Site structure from the graph | ⬜ Not started |
+| 7 | The page-writing agent | ⬜ Not started |
+| 8 | Internal linking + structured data | ⬜ Not started |
 
 ---
 
@@ -127,39 +128,84 @@ reference/audit trail).
 
 ---
 
-## ⬜ Phases 5–8 — Not started
+## ✅ Phase 5 — Keywords, intent, and the join (DONE)
 
-- **5. Keywords + the join** — ingest a real keyword export, build
-  `Keyword→Entity` (needs your keyword data — you said none exists yet).
-- **6. Clustering** — run Louvain, get named topic clusters.
-- **7. Site structure & sitemap** — turn clusters + the three pillars into
-  a URL plan. Largely already drafted in the source document's sections
-  3-6 — this phase mostly formalises it.
-- **8. Page agent** — the LangGraph write→critique→revise loop, run
-  against one cluster and reviewed before any bulk generation.
+Branch: `feature/keyword-graph-and-agent`. This is the mentor's **task 1**
+("a knowledge graph that maps topics, entities, and search intent").
+
+- [x] 154 supplied keywords → `data/keywords.csv` (147 unique after
+      collapsing 7 duplicate spellings). Replaced the fake placeholder
+      rows. No `search_volume` column — the list has no volumes, and an
+      invented number is worse than none.
+- [x] 10 new taxonomy notes the keyword list needed (Profession,
+      Superhero, Cosplay, Mascot, Trophy/Award, + 5 recipients)
+- [x] `src/ingest/keywords.py` **rewritten** (the old one couldn't even
+      be imported). Intent by rule — no LLM, no API cost.
+- [x] `src/enrich/link_keywords.py` **rewritten** — fixes the `CONTAINS`
+      false positives ("Pet" matched "carpet") and the duplicate-edge
+      `MERGE`
+- [x] New `aliases:` frontmatter field — the single biggest win
+- [x] `scripts/inspect_keywords.py` verification report
+
+```
+147 keywords, each with exactly one of 4 intents
+   transactional 127 | commercial 12 | informational 8
+
+the join:  112/147 keywords linked  (76.2%),  130 relationships
+   before aliases:  81/147 (55.1%)
+   after  aliases: 112/147 (76.2%)   <- all 34 alias matches hand-checked
+
+biggest magnets: Memorial/Loss 45, Pet 9, Corporate 7, Wedding 7
+```
+
+**The vector pass is off by default** (`--vector` to enable). Measured
+~1 correct in 14 on this dataset — every note is about custom figurines,
+so all embeddings cluster tightly and the keywords pass 1 misses are
+generic head terms equidistant from everything. Not a tuning problem:
+the wrong matches score *higher* than the right ones. Full reasoning in
+the module docstring and `CHANGELOG.md`.
+
+---
+
+## ⬜ Phases 6–8 — Not started
+
+- **6. Site structure** — cluster keywords by the entity they're `ABOUT`,
+  then decide page type per cluster using the mentor's own IF/THEN rules
+  (transactional + product → collection page; "vs"/"compare" →
+  comparison; question keywords → blog). His **task 2**.
+- **7. Page agent** — the LangGraph brief→draft→critique→revise loop.
+  His **task 3**. `src/agents/context.py` must be rewritten first (it
+  returns hardcoded sample data), and `page_graph.py` currently imports
+  `GEMINI_API_KEY`, which no longer exists.
+- **8. Internal linking + structured data** — `SHOULD_LINK_TO` from
+  shared entities, plus JSON-LD per page type. His **task 4**.
 
 ---
 
 ## What to do manually right now
 
-The catalogue is loaded. Two loose ends from the transcription, both
-low-priority:
-
-1. **Confirm 2 truncated URLs** against the live Getfiguro site and fill
+1. **Review Phase 5** on the `feature/keyword-graph-and-agent` branch —
+   nothing is merged to `main` or pushed yet.
+2. **Confirm 2 truncated URLs** against the live Getfiguro site and fill
    them into `products/dust-proof-acrylic-display-box.md` and
-   `products/gift-box-packaging.md` (`url:` field is currently blank).
-2. Optional: browse the graph and sanity-check a few products against
-   what you know of the real catalogue.
+   `products/gift-box-packaging.md` (still blank, low priority).
+3. **Tell the mentor about one simplification**: his diagram shows five
+   AI agents; the plan implements one real LLM agent (page generation,
+   his task 3) plus deterministic code for the rest. Keyword parsing,
+   intent classification, and entity expansion are a CSV read, a rule
+   table, and a Cypher query — making them LLM calls costs money, adds
+   failure modes, and makes them untestable, for no gain.
 
 ```powershell
 .\run.ps1 browser
 ```
 
-Try in Neo4j Browser: `MATCH (p:__Entity__ {type:'Product'})-->(t) RETURN p,t`
-to see every product and its tags at once.
+See the join in Neo4j Browser:
+```cypher
+MATCH (k:Keyword)-[:ABOUT]->(e:__Entity__ {name:'Memorial / Loss'})
+RETURN k, e
+```
 
-The next real decision is **what to build next** — Phase 5 (keywords)
-needs a keyword export you don't have yet, so likely candidates are
-fixing the remaining Phase 1 pipeline defects, or jumping ahead to try
-GDS Louvain clustering on this catalogue as-is to see what topic
-clusters fall out of it.
+The next decision is **Phase 6 scope** — whether to route the 35
+unlinked head terms ("custom figurine", "buy custom figurine") to
+site-level pages, which is what they actually want to be.

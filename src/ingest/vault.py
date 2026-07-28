@@ -115,6 +115,12 @@ def ingest_vault(directory: str, db: DatabaseManager) -> None:
             "url": fm.get("url") or fm.get("collection_url"),
             "primary_keyword": fm.get("primary_keyword"),
             "keywords": fm.get("keywords") or [],
+            # Other words a searcher uses for this same thing. The title
+            # is what the business calls it; aliases are what customers
+            # type. "Sports" is never searched as "sports figurine" --
+            # people search "football figurine". Used by the
+            # Keyword -> Entity join in src/enrich/link_keywords.py.
+            "aliases": fm.get("aliases") or [],
             "season": fm.get("season"),
             "caution": fm.get("caution"),
             "source_section": fm.get("source_section"),
@@ -187,6 +193,7 @@ def ingest_vault(directory: str, db: DatabaseManager) -> None:
             e.url = row.url,
             e.primary_keyword = row.primary_keyword,
             e.keywords = row.keywords,
+            e.aliases = row.aliases,
             e.season = row.season,
             e.caution = row.caution,
             e.source_section = row.source_section,

@@ -89,7 +89,7 @@ def link_pass1_exact(db: DatabaseManager) -> int:
     logger.info("Pass 1: whole-word matching keyword -> entity...")
 
     entities = db.execute_query(
-        "MATCH (e:__Entity__) RETURN e.name AS name, e.type AS type"
+        "MATCH (e:__Entity__) RETURN e.name AS name, e.type AS type, e.aliases AS aliases"
     )
     keywords = db.execute_query(
         "MATCH (k:Keyword) RETURN k.normalized AS normalized"
@@ -100,12 +100,22 @@ def link_pass1_exact(db: DatabaseManager) -> int:
             f"Run the vault and keyword ingests first."
         )
 
-    # Precompile once rather than per keyword-entity pair.
-    compiled = [
-        (e["name"], alias, alias_pattern(alias))
-        for e in entities
-        for alias in entity_aliases(e["name"])
-    ]
+    # Two sources of surface forms:
+    #   - derived from the title      ("Memorial / Loss" -> memorial, loss)
+    #   - hand-authored `aliases:`    (memorial -> sympathy, bereavement)
+    # The second matters more than it looks. Nobody searches "sports
+    # figurine"; they search "football figurine". Without aliases the
+    # title is the only thing we can match on, and the join misses every
+    # keyword that uses the customer's word instead of the catalogue's.
+    compiled = []
+    for e in entities:
+        forms = set(entity_aliases(e["name"]))
+        for extra in (e.get("aliases") or []):
+            cleaned = str(extra).strip().lower()
+            if len(cleaned) >= MIN_ALIAS_LEN:
+                forms.add(cleaned)
+        for alias in sorted(forms):
+            compiled.append((e["name"], alias, alias_pattern(alias)))
 
     rows: List[Dict[str, Any]] = []
     seen = set()

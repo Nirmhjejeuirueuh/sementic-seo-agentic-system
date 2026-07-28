@@ -3,6 +3,7 @@ type: Product
 title: 3D Printed Miniature Replica of Yourself
 url: /products/miniature-replica-from-photo
 status: existing
+aliases: [mini me, miniature replica, mini statue]
 styles: []
 types: []
 occasions: []

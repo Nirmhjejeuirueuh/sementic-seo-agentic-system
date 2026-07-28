@@ -4,6 +4,7 @@ title: Profession / Occupational
 collection_url:
 status: proposed
 primary_keyword: custom profession figurine
+aliases: [doctor, nurse, firefighter, police, military, soldier, officer]
 source_section: "keyword list — Hobby & Profession"
 ---
 

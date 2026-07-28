@@ -4,6 +4,7 @@ title: Memorial / Loss
 collection_url:
 status: existing
 primary_keyword: pet memorial figurine
+aliases: [sympathy, bereavement, grief, remembrance, tribute, in loving memory, funeral, condolence, rainbow bridge]
 source_section: "1.2, 1.3"
 ---
 

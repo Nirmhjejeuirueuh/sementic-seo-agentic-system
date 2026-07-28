@@ -4,6 +4,7 @@ title: Wedding
 collection_url: /collections/wedding-events
 status: existing
 primary_keyword: custom wedding figurine
+aliases: [bride, groom, bride and groom, bridal]
 source_section: "1.2, 3"
 ---
 

@@ -118,8 +118,11 @@ instance must be started again by hand
    in `src/config.py`. Every ingest path routes through it.
 3. **Vector dimensions must match** between `.env` and the index
    definitions. A mismatch fails *silently* (zero rows, no error).
-4. **Target Cypher 5 syntax** (Neo4j 5.26): `CALL { WITH x ... }`, not
-   `CALL (x) { ... }`.
+4. **Target Cypher 5 syntax** (Neo4j 5.26): use the variable scope
+   clause `CALL (x) { ... }`, not `CALL { WITH x ... }`. *(This rule
+   previously stated the opposite. It was wrong: 5.26 deprecates
+   `CALL { WITH x }` and warns on every such query. Verified on both the
+   local and DigitalOcean 5.26.0 instances, 2026-07-28.)*
 5. **Match `FROM_CHUNK` undirected.** Its direction has moved between
    `neo4j-graphrag` releases.
 6. **Cluster on entity co-occurrence, not extracted relationships.**
@@ -183,6 +186,28 @@ See `README.md` for full setup and `progress-tracker.md` for current state.
 - Do not rewrite `src/ingest/documents.py` (the prose/PDF extractor) yet —
   it stays reserved for the source document's §7-8 SEO rulebook, a
   distinctly different job from the deterministic vault loader.
-- **Phase 5+ (keywords, "the join", clustering, the agent): blocked** —
-  no real keyword data yet, and four handover modules still need repair
-  (Phase 1).
+- **Phase 5 (keywords, intent, "the join"): done**, on branch
+  `feature/keyword-graph-and-agent`. 147 keywords, each with exactly one
+  of 4 intents; `(:Keyword)-[:ABOUT]->(:__Entity__)` at 76.2% coverage
+  (112/147) by whole-word matching. `keywords.py` and `link_keywords.py`
+  were rewritten rather than repaired. The vector pass exists but is off
+  by default — measured ~1 correct in 14 on this dataset, for structural
+  reasons explained in its docstring. The 35 unlinked keywords are
+  mostly generic head terms and are the input to Phase 6.
+- **Phase 6+ (site structure, page agent, internal linking): not
+  started.** Two handover modules still need rewriting when their phase
+  arrives: `src/analyze/clusters.py` (invented PageRank formula,
+  hardcoded modularity) and `src/agents/context.py` (hardcoded sample
+  keywords/passages). `src/agents/page_graph.py` additionally imports
+  `GEMINI_API_KEY`, which no longer exists in `config.py`, so it cannot
+  currently be imported at all.
+
+### Keyword vocabulary vs. catalogue vocabulary
+
+The join matches a keyword to an entity on **whole words**, using the
+note title plus any hand-authored `aliases:`. That field carries more
+weight than its size suggests: the catalogue says `Sports`, customers
+search `football figurine`. Adding aliases to 8 notes moved coverage
+from 55% to 76% with no loss of precision. When the join misses, check
+whether the entity simply lacks the customer's word before reaching for
+anything cleverer — see `data/vault/README.md`.

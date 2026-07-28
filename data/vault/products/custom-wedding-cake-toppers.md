@@ -3,6 +3,7 @@ type: Product
 title: Custom Wedding Cake Topper Figurines
 url: /products/custom-wedding-cake-toppers
 status: existing
+aliases: [cake topper]
 styles: []
 types: []
 occasions: [Wedding]

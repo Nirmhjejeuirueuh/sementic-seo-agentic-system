@@ -7,6 +7,129 @@ Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## [Phase 5 — Keywords, intent, and "the join"] — 2026-07-28
+
+Branch: `feature/keyword-graph-and-agent`.
+
+The mentor supplied a real (if illustrative) keyword list — 154 keywords
+across 13 headings, plus a second memorial-specific set. That list was
+the thing blocking every remaining phase, and this phase turns it into
+the `(:Keyword)-[:ABOUT]->(:__Entity__)` relationship the project exists
+for. Covers the mentor's task 1 ("a knowledge graph that maps topics,
+entities, and search intent").
+
+### Added
+- **`data/keywords.csv`** — all 154 keywords, each carrying the heading
+  it appeared under. Replaces the AI Studio placeholder rows, which were
+  fake ("semantic seo guide", "neo4j gds community detection louvain").
+  **No `search_volume` column**: the supplied list has no volume figures
+  and a fabricated number is worse than an absent one (rule 9).
+- **10 taxonomy notes** the keyword list requires but the catalogue
+  lacked: `types/profession.md`, `types/superhero.md`, `types/cosplay.md`,
+  `types/mascot.md`, `formats/trophy-award.md`, and five recipients
+  (`girlfriend`, `husband`, `wife`, `dad`, `mum`). The existing four
+  recipients covered almost none of the gift keywords.
+- **`aliases:` frontmatter field**, supported by `src/ingest/vault.py`
+  and used by the join. The title is what the business calls a thing;
+  aliases are what customers type. Nobody searches "sports figurine" —
+  they search "football figurine". Documented in `data/vault/README.md`.
+- **`scripts/inspect_keywords.py`** — keyword-side counterpart to
+  `inspect_vault.py`. Reports intent split, join coverage by method,
+  which entities attract the most keywords, entities no keyword reaches,
+  and the unlinked keywords grouped by source heading.
+
+### Rewritten (not repaired)
+Both modules were replaced wholesale rather than patched, following the
+proven `vault.py` shape — build rows in Python, validate, embed in bulk,
+batch write:
+
+- **`src/ingest/keywords.py`** — the old file imported
+  `generate_embedding` from `src.db`, a function deleted in Phase 0 with
+  the SHA-256 fake-embedding fallback, so the module could not even be
+  imported. It also embedded one row per loop iteration. The new version
+  classifies intent by rule (no LLM, no API cost, identical on every
+  re-run), using the author's own category headings as the primary
+  signal and word patterns to override them where a keyword clearly
+  contradicts its heading ("buy memorial figurine" is transactional
+  wherever it was listed).
+- **`src/enrich/link_keywords.py`** — the old file had two real defects.
+  It matched with `CONTAINS`, so the entity "Pet" matched the keyword
+  "carpet cleaning". And it wrote
+  `MERGE (k)-[r:ABOUT {similarity_score: score}]->(e)`; because MERGE
+  matches on the whole pattern including properties and `score` is a
+  float that shifts between runs, every run created a fresh duplicate
+  edge. The new pass 1 matches whole words only (`\b`), tolerating a
+  simple plural so `award` catches `awards`. ABOUT is treated as derived
+  and recomputed from scratch each run, so a rule change can never leave
+  a stale edge behind.
+
+### Fixed
+- **A duplicate-edge bug introduced during this phase.** After changing
+  the intent rules and re-running, `pet figurine` had *two* intents: the
+  new `HAS_INTENT` edge was created but the old one survived — the same
+  class of bug being fixed in `link_keywords.py`. The write now deletes
+  any existing intent edge before attaching the current one.
+  `inspect_keywords.py` asserts the invariant so a regression is visible.
+
+### Measured: the vector pass is off by default
+Pass 2 (keyword → nearest chunk → entity) is implemented but requires
+`--vector`. On this dataset it is **~1 correct in 14**:
+
+```
+0.8936  custom portrait figurine   -> Bronze / Sculpture Finish   wrong
+0.8785  custom gifts               -> Him                         wrong
+0.8782  buy custom figurine        -> Bronze / Sculpture Finish   wrong
+0.8759  custom gift                -> Coach                       wrong
+0.8778  create figurine from photo -> Turn Your Photo Into a ...   right
+```
+
+The cause is structural, not a threshold to tune. Every note in the
+vault is about custom figurines, so the embeddings sit in one tight
+cluster — the entire score range across all keyword-chunk pairs is
+0.756–0.894. Worse, the keywords pass 1 misses are precisely the generic
+head terms ("custom figurine", "personalised gift"), which are genuinely
+equidistant from every entity because they describe the whole catalogue.
+Nearest-neighbour search still returns something, so it returns an
+arbitrary something — and the wrong matches score *higher* than the
+right one. Kept, with the measurements in the docstring, because it
+becomes useful once the graph holds genuinely distinct topics (pricing,
+shipping, materials) rather than 82 variations on one subject.
+
+### Verified
+```
+python -m src.ingest.keywords
+  -> 154 CSV rows -> 147 unique keywords (7 duplicate spellings collapsed)
+  -> intent: transactional 127, commercial 12, informational 8
+  -> every keyword has exactly one intent
+
+python -m src.enrich.link_keywords
+  -> pass 1 only: 130 ABOUT relationships, 112/147 keywords linked (76.2%)
+
+  before aliases:  81/147  (55.1%),  96 relationships
+  after  aliases: 112/147  (76.2%), 130 relationships
+  all 34 alias-driven matches checked by hand, all correct
+```
+
+Biggest keyword magnets: `Memorial / Loss` 45, `Pet` 9, `Corporate` 7,
+`Wedding` 7 — memorial dominates, which matches the mentor supplying an
+entire second memorial-specific keyword set.
+
+### Known follow-up
+- The 35 still-unlinked keywords are almost all **generic head terms**
+  ("custom figurine", "buy custom figurine", "figurine maker") that
+  correctly belong to the homepage or a top-level collection rather than
+  to any single entity. Phase 6 should route them to site-level pages
+  rather than force an entity match.
+- Genuine missing entities among the remainder: action figure, resin (a
+  material), and props ("custom figurine with car"). Not invented here —
+  they need a real source, not a guess.
+- `CLAUDE.md` rule 4 is **backwards** and has been corrected in this
+  commit: it mandated `CALL { WITH x ... }`, but Neo4j 5.26 deprecates
+  that form and emits a warning on every such query. `CALL (x) { ... }`
+  is the current syntax and was verified working on 5.26.
+
+---
+
 ## [Phase 4 — Deployed to DigitalOcean] — 2026-07-28
 
 The mentor provided root SSH access to an existing DigitalOcean droplet
