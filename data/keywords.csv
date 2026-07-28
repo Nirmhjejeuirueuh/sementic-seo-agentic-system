@@ -1,11 +1,155 @@
-keyword,search_volume,intent,target_page
-semantic seo guide,1800,informational,/semantic-seo
-what is a knowledge graph in seo,1200,informational,/knowledge-graph-seo
-best semantic seo software,850,commercial,/software-comparison
-buy semantic seo tool subscription,400,transactional,/pricing
-top topic cluster tools,950,commercial,/topic-clusters
-how to implement internal linking with neo4j,600,informational,/internal-linking
-neo4j gds community detection louvain,350,informational,/neo4j-gds-guide
-langgraph page generator tutorial,500,informational,/langgraph-tutorial
-search intent classification algorithms,300,informational,/intent-classification
-cloud run docker neo4j setup,250,navigational,/neo4j-docker-setup
+keyword,category
+custom figurine from photo,High-Intent (Sales)
+personalised figurine,High-Intent (Sales)
+personalised statue,High-Intent (Sales)
+custom statue from photo,High-Intent (Sales)
+mini me figurine,High-Intent (Sales)
+mini me statue,High-Intent (Sales)
+custom bobblehead,High-Intent (Sales)
+realistic figurine,High-Intent (Sales)
+custom resin figurine,High-Intent (Sales)
+custom 3D figurine,High-Intent (Sales)
+custom family figurine,High-Intent (Sales)
+personalised family figurine,High-Intent (Sales)
+custom couple figurine,High-Intent (Sales)
+wedding cake topper figurine,High-Intent (Sales)
+personalised cake topper,High-Intent (Sales)
+custom action figure,High-Intent (Sales)
+custom mini statue,High-Intent (Sales)
+custom portrait figurine,High-Intent (Sales)
+handmade figurine from photo,High-Intent (Sales)
+custom sculpture from photo,High-Intent (Sales)
+personalised gifts,Gift
+custom gifts,Gift
+anniversary gift,Gift
+birthday gift,Gift
+wedding gift,Gift
+Valentine's Day gift,Gift
+Father's Day gift,Gift
+Mother's Day gift,Gift
+retirement gift,Gift
+graduation gift,Gift
+Christmas gift,Gift
+memorial figurine,Gift
+pet memorial statue,Gift
+pet figurine,Gift
+custom pet statue,Gift
+corporate awards,Corporate
+employee recognition awards,Corporate
+custom company mascot,Corporate
+executive gifts,Corporate
+corporate gifts,Corporate
+retirement awards,Corporate
+employee appreciation gifts,Corporate
+custom trophy,Corporate
+custom office decor,Corporate
+personalised business gifts,Corporate
+football figurine,Hobby & Profession
+cricket figurine,Hobby & Profession
+golfer figurine,Hobby & Profession
+doctor figurine,Hobby & Profession
+nurse figurine,Hobby & Profession
+firefighter figurine,Hobby & Profession
+police figurine,Hobby & Profession
+military figurine,Hobby & Profession
+wedding figurine,Hobby & Profession
+bride and groom figurine,Hobby & Profession
+graduation figurine,Hobby & Profession
+superhero figurine,Hobby & Profession
+cosplay figurine,Hobby & Profession
+anime figurine custom,Hobby & Profession
+best personalised gifts,SEO Blog
+unique gift ideas,SEO Blog
+gifts for husband,SEO Blog
+gifts for wife,SEO Blog
+gifts for boyfriend,SEO Blog
+gifts for girlfriend,SEO Blog
+gifts for dad,SEO Blog
+gifts for mum,SEO Blog
+wedding gift ideas,SEO Blog
+anniversary gift ideas,SEO Blog
+retirement gift ideas,SEO Blog
+employee appreciation gifts,SEO Blog
+birthday gifts for men,SEO Blog
+birthday gifts for women,SEO Blog
+custom figurine from photo UK,Long-Tail
+custom figurine from photo USA,Long-Tail
+custom couple figurine from photo,Long-Tail
+personalised wedding figurine,Long-Tail
+custom family statue from photo,Long-Tail
+custom pet figurine from photo,Long-Tail
+realistic 3D printed figurine,Long-Tail
+personalised mini me doll,Long-Tail
+custom resin statue from photo,Long-Tail
+handmade custom figurine,Long-Tail
+custom figurine with pets,Long-Tail
+custom figurine with car,Long-Tail
+custom figurine for wedding,Long-Tail
+personalised superhero figurine,Long-Tail
+realistic custom action figure,Long-Tail
+buy custom figurine,Commercial Intent
+order personalised figurine,Commercial Intent
+create figurine from photo,Commercial Intent
+custom figurine online,Commercial Intent
+custom statue online,Commercial Intent
+personalised figurine shop,Commercial Intent
+figurine maker,Commercial Intent
+custom figurine company,Commercial Intent
+best custom figurine,Commercial Intent
+realistic figurine maker,Commercial Intent
+custom figurine,Seed (Google Ads)
+personalised figurine,Seed (Google Ads)
+custom statue,Seed (Google Ads)
+mini me figurine,Seed (Google Ads)
+custom bobblehead,Seed (Google Ads)
+figurine from photo,Seed (Google Ads)
+personalised gift,Seed (Google Ads)
+custom gift,Seed (Google Ads)
+custom sculpture,Seed (Google Ads)
+custom action figure,Seed (Google Ads)
+memorial figurine,Memorial - Primary
+personalised memorial figurine,Memorial - Primary
+custom memorial figurine,Memorial - Primary
+memorial statue,Memorial - Primary
+personalised memorial statue,Memorial - Primary
+custom remembrance figurine,Memorial - Primary
+remembrance figurine,Memorial - Primary
+tribute figurine,Memorial - Primary
+in loving memory figurine,Memorial - Primary
+memorial keepsake,Memorial - Primary
+custom memorial figurine from photo,Memorial - Photo-Based
+memorial figurine from photo,Memorial - Photo-Based
+personalised statue from photo,Memorial - Photo-Based
+custom tribute statue from photo,Memorial - Photo-Based
+create memorial figurine from photo,Memorial - Photo-Based
+memorial gift for loss of loved one,Memorial - Human
+sympathy gift,Memorial - Human
+bereavement gift,Memorial - Human
+grief gift,Memorial - Human
+remembrance gift,Memorial - Human
+personalised sympathy gift,Memorial - Human
+custom remembrance gift,Memorial - Human
+funeral memorial keepsake,Memorial - Human
+loss of father gift,Memorial - Human
+loss of mother gift,Memorial - Human
+loss of husband gift,Memorial - Human
+loss of wife gift,Memorial - Human
+loss of child memorial,Memorial - Human
+angel memorial figurine,Memorial - Human
+pet memorial figurine,Memorial - Pet
+custom pet memorial statue,Memorial - Pet
+dog memorial figurine,Memorial - Pet
+cat memorial figurine,Memorial - Pet
+pet remembrance gift,Memorial - Pet
+pet loss gift,Memorial - Pet
+rainbow bridge memorial,Memorial - Pet
+custom pet figurine from photo,Memorial - Pet
+buy memorial figurine,Memorial - Long-Tail
+order memorial figurine from photo,Memorial - Long-Tail
+custom memorial figurine online,Memorial - Long-Tail
+realistic memorial figurine,Memorial - Long-Tail
+handmade memorial figurine,Memorial - Long-Tail
+custom memorial statue from photo,Memorial - Long-Tail
+personalised memorial gift for family,Memorial - Long-Tail
+memorial figurine with ashes,Memorial - Long-Tail
+custom memorial sculpture,Memorial - Long-Tail
