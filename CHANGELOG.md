@@ -7,6 +7,79 @@ Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## [Phase 4 — Deployed to DigitalOcean] — 2026-07-28
+
+The mentor provided root SSH access to an existing DigitalOcean droplet
+(`137.184.229.189`) with a guide for installing Neo4j directly (no
+Docker). The droplet turned out to be **shared with an unrelated
+project** — an existing Neo4j at `/opt/neo4j` (ports 7474/7687) backing
+`/root/figuro-backlink-agent`, a different team repo
+(`axcer-shared-projects/figuro-backlink-agent`), plus a separate Figuro
+Shopify-theme checkout and various other unrelated tools. Confirmed by
+searching the whole disk for anything matching this project (the
+knowledge-base file, `vault.py`, a `data/vault` folder) and finding
+nothing — this project had never touched that server before.
+
+Given the shared, unrelated existing database, ran a **second, isolated
+Neo4j instance** side by side rather than reusing or replacing the first.
+
+### Added
+- **A second Neo4j 5.26.0 install at `/opt/neo4j2`** on the droplet,
+  extracted from the tarball already present on the server. Configured
+  on its own ports (HTTP 7475, Bolt 7688) so it cannot collide with the
+  existing instance's defaults.
+- **GDS 2.13.2 + APOC 5.26.0** installed into `/opt/neo4j2/plugins` —
+  APOC copied from the existing instance's `labs/` folder, GDS
+  downloaded fresh. The mentor's guide only covered plain Neo4j; GDS is
+  required for this project's clustering step (`src/analyze/clusters.py`,
+  once repaired) and was added on top.
+- **Memory tuned for the shared 1.9 GB droplet**: heap capped at 512m,
+  page cache at 128m (existing instance already uses ~500 MB; a 2 GB
+  swapfile already present on the box gives headroom either way).
+- **A strong, unique password**, set via `neo4j-admin dbms
+  set-initial-password` before first start (replacing the "will change
+  it myself" placeholder from the mentor's handoff).
+- Firewall opened for the new ports only: `ufw allow 7475`,
+  `ufw allow 7688`.
+
+### Migrated
+- Applied `cypher/001_schema.cypher` against the remote instance — same
+  12 statements, same command, just `NEO4J_URI` pointed at
+  `bolt://137.184.229.189:7688` instead of localhost.
+- Ran `python -m src.ingest.vault` against the remote instance from this
+  machine (no code changes — the loader doesn't care which Neo4j it
+  talks to). Verified byte-identical to local:
+  ```
+  72 entities, 61 pages, 31 links, 72 chunks, 175 relationships
+  -- identical on local (:7687) and remote (:7688)
+  ```
+
+### Verified untouched
+- `/opt/neo4j` (existing instance) confirmed still running throughout —
+  checked before, during, and after via `ps aux` and an HTTP request to
+  port 7474 — and its process was never stopped, its config never
+  edited, its data directory never touched.
+
+### Known follow-up
+- **No systemd service yet** — if the droplet reboots, `/opt/neo4j2`
+  must be started by hand:
+  `sudo -u neo4j /opt/neo4j2/bin/neo4j start`. The existing instance
+  presumably has its own separate start mechanism, not investigated
+  (out of scope — not this project's install).
+- **No automated sync** between local vault edits and the remote copy.
+  Re-run `python -m src.ingest.vault` with `NEO4J_URI` pointed at the
+  remote after any local change that should propagate.
+- **Root password for the whole droplet was shared in plaintext** over
+  chat during handoff. Recommended the user rotate it; not something
+  this project's tooling can do on their behalf.
+- Both ports (7475 HTTP, 7688 Bolt) are open to the public internet, not
+  restricted to a specific IP — matches how the existing instance's
+  ports were already configured on this droplet. Acceptable for a
+  password-protected dev database; would need tightening before treating
+  it as anything more sensitive.
+
+---
+
 ## [Phase 3-4 — Full 37-product catalogue loaded] — 2026-07-27
 
 Completed the vault begun earlier the same day. The user hand-authored

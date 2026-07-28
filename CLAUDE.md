@@ -76,6 +76,40 @@ interpreter. Docker Desktop must be running for anything database-related.
 
 ---
 
+## Where the database runs
+
+There are now **two live copies** of this graph, kept in sync manually —
+nothing pushes automatically between them.
+
+| | Local (primary dev) | DigitalOcean (shared, remote) |
+|---|---|---|
+| Host | Docker Desktop, this machine | Droplet `137.184.229.189` |
+| Bolt | `bolt://localhost:7687` | `bolt://137.184.229.189:7688` |
+| Browser | `http://localhost:7474` | `http://137.184.229.189:7475` |
+| Install | `neo4j:5.26-community` image | Neo4j 5.26.0 unpacked at `/opt/neo4j2` |
+| Password | `password123` | strong, shared privately — see mentor thread |
+
+**The droplet is shared with an unrelated project.** `/opt/neo4j`
+(ports 7474/7687) and `/root/figuro-backlink-agent` on that same server
+belong to a different, unrelated team repo
+(`axcer-shared-projects/figuro-backlink-agent`) — **never stop, delete,
+or reconfigure anything under `/opt/neo4j` (no `2` suffix) or that repo.**
+Everything for this project on the droplet lives under `/opt/neo4j2`
+only.
+
+To push a local edit (e.g. an updated vault note) to the remote copy,
+re-run the loader with the remote URI:
+```bash
+NEO4J_URI="bolt://137.184.229.189:7688" NEO4J_USERNAME="neo4j" NEO4J_PASSWORD="<pw>" \
+  python -m src.ingest.vault --dir data/vault
+```
+Safe to re-run — everything is `MERGE`d. There is currently no automated
+sync and no systemd auto-restart on the droplet: if it reboots, the
+instance must be started again by hand
+(`sudo -u neo4j /opt/neo4j2/bin/neo4j start`).
+
+---
+
 ## Hard rules (each exists because breaking it causes a hard-to-find bug)
 
 1. **Never write to Neo4j in a Python loop.** Batch rows and
@@ -126,7 +160,7 @@ See `README.md` for full setup and `progress-tracker.md` for current state.
 
 ---
 
-## Current state (2026-07-27)
+## Current state (2026-07-28)
 
 - **Phase 0 (infrastructure): done and verified.**
 - **Phase 1 (repair pipeline modules): in progress.** Five modules still
@@ -136,14 +170,19 @@ See `README.md` for full setup and `progress-tracker.md` for current state.
   `ALLOWED_RELATIONSHIPS` in `src/config.py` now reflect the figurine
   domain: `Product`, `FigurineStyle`, `FigurineType`, `Occasion`,
   `Format`, `Recipient`, `Accessory`.
-- **Phase 3 (knowledge base in Obsidian): in progress.** Catalogue and
-  taxonomy facts are hand-authored as frontmatter in `data/vault/`, not
-  LLM-extracted — see `data/vault/README.md` for the convention.
-  `src/ingest/vault.py` is the deterministic loader (no LLM calls, no
-  fallback that invents a tag). 29 taxonomy notes (styles/types/occasions)
-  are fully transcribed from the source document; 2 of 5 first-slice
-  product notes are written; `formats/`, `recipients/`, `accessories/`
-  are scaffolded but empty pending a later scale-up pass.
+- **Phase 3 (knowledge base in Obsidian): done.** 72 notes (37 products +
+  35 taxonomy) fully transcribed from the source document and loaded.
+  `accessories/` is deliberately still empty — no product in the source
+  document pairs with a specific accessory, so there's nothing true to
+  tag yet.
+- **Phase 4 (remote deployment): done.** The same 72-note graph is now
+  also live on a DigitalOcean droplet (`/opt/neo4j2`, ports 7475/7688) —
+  see "Where the database runs" above. Verified identical to local:
+  72 entities, 61 pages, 31 links, 72 chunks, 175 relationships on both.
+  No auto-sync, no auto-restart-on-reboot yet.
 - Do not rewrite `src/ingest/documents.py` (the prose/PDF extractor) yet —
   it stays reserved for the source document's §7-8 SEO rulebook, a
   distinctly different job from the deterministic vault loader.
+- **Phase 5+ (keywords, "the join", clustering, the agent): blocked** —
+  no real keyword data yet, and four handover modules still need repair
+  (Phase 1).
