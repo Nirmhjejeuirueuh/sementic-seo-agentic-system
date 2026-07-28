@@ -1,0 +1,29 @@
+# Secrets
+.env*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Generated output
+output/
+*.log
+
+# Obsidian workspace state (keep the notes, ignore the UI state)
+data/vault/.obsidian/workspace*
+data/vault/.trash/
+/.obsidian/
+/Untitled.base
+/Untitled.canvas
+/2026-07-27.md
+
+# Beginner guidance docs (not part of the repo)
+docs/*.html
+
+# OS
+.DS_Store
+Thumbs.db

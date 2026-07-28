@@ -1,0 +1,60 @@
+# Neo4j 5.26 LTS (supported to June 2028) with APOC + Graph Data Science.
+#
+# Community Edition includes both plugins for free. We run locally rather
+# than on Aura because Aura Free has no GDS at all, and the graph-analytics
+# Cypher API on paid Aura needs Business Critical tier or above.
+#
+# Note: `version:` was removed from this file. Modern Docker Compose
+# ignores it and warns that it is obsolete.
+
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: neo4j_semantic_seo
+    restart: unless-stopped
+    ports:
+      - "7474:7474"   # HTTP -- Neo4j Browser, open http://localhost:7474
+      - "7687:7687"   # Bolt -- what the Python driver connects to
+    environment:
+      # Credentials. Format is user/password. Must match .env.
+      - NEO4J_AUTH=neo4j/password123
+
+      # Plugins are downloaded on first boot, so the first `up` is slow
+      # (~1-2 min). Later boots are fast.
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+
+      # GDS and APOC call into internals, so they must be allowlisted.
+      # These two setting names are unchanged in Neo4j 5.
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+
+      # MEMORY -- these were previously written as NEO4J_dbms_memory_*,
+      # which is Neo4j 4 naming. Neo4j 5 renamed them to server.memory.*
+      # and silently ignores the old ones, so none of the tuning applied.
+      #
+      # Env var encoding rule: '.' becomes '_', and a literal '_' in the
+      # setting name becomes '__' (double underscore). So
+      #   server.memory.heap.max_size  ->  NEO4J_server_memory_heap_max__size
+      - NEO4J_server_memory_heap_initial__size=1G
+      - NEO4J_server_memory_heap_max__size=2G
+      - NEO4J_server_memory_pagecache_size=1G
+
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/var/lib/neo4j/import
+      - neo4j_plugins:/plugins
+
+    healthcheck:
+      # `docker compose ps` shows healthy once this passes.
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p password123 'RETURN 1;' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_import:
+  neo4j_plugins:
