@@ -1,146 +1,272 @@
+"""
+Phase 6.1 -- topic clusters: group the keyword demand into page-sized units.
+
+A cluster is "one topic a page could be written about". It is built from
+the join: every entity that attracts at least one keyword becomes a
+cluster, except where two entities clearly belong on the same page, in
+which case they share one.
+
+Rewritten from scratch. The previous version had two defects:
+
+  1. `run_pagerank_and_link_candidates` did not compute PageRank. It set
+     `e.pageRank = keyword_degree * 1.5 + log10(total_volume + 1.0)`,
+     an invented formula stored under a name that implies the real
+     algorithm. Downstream code would trust the name. That function is
+     removed here -- internal linking is Phase 8's job and will use
+     `gds.pageRank` properly.
+  2. Its GDS fallback returned `0.72 AS modularity`, a hardcoded
+     constant. Modularity is the number that tells you whether the
+     clustering is any good, so returning a plausible-looking literal
+     made a completely failed run report a healthy score.
+
+HOW ENTITIES ARE GROUPED, and why it is this and not something cleverer:
+
+Two entities belong together when the same keyword is about both --
+"pet memorial figurine" is about Pet and about Memorial / Loss, so those
+two share a page. That is entity co-occurrence, per CLAUDE.md rule 6.
+
+Measured on this dataset (2026-07-28, 82 entities, 112 linked keywords):
+
+    entity pairs sharing >= 1 keyword      11
+    keywords pointing at exactly 1 entity  95 of 112
+    GDS Louvain communities                73 of 82 entities
+
+So the co-occurrence graph is very sparse and Louvain is close to the
+identity function -- most entities are genuinely independent topics.
+It is still used rather than hand-rolled, because the merges it does
+find are exactly the right ones:
+
+    Memorial / Loss           + Pet                            (5 shared)
+    Family / Group Custom Fig + Family                          (4 shared)
+    Trophy / Award            + Corporate                       (2 shared)
+
+Clusters are derived. They are dropped and rebuilt on every run.
+
+Run:  python -m src.analyze.clusters
+"""
+
 import logging
-from typing import List, Dict, Any
+from collections import defaultdict
+from typing import Any, Dict, List
+
 from src.db import DatabaseManager
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-7s %(message)s")
 logger = logging.getLogger(__name__)
 
-def run_entity_cooccurrence_clustering(db: DatabaseManager) -> Dict[str, Any]:
+GRAPH_NAME = "entity_cooccurrence"
+
+# How many keywords two entities must share before they are treated as
+# one topic.
+#
+# This is 2, not 1, and the difference is large. At 1, a single keyword
+# is enough to fuse two entities, and Louvain then chains through those
+# weak links. Measured on this dataset:
+#
+#   "loss of husband gift"      is the ONLY keyword shared by Husband
+#                               and Memorial / Loss
+#   "loss of wife gift"         likewise for Wife
+#   "realistic memorial figurine" likewise for Realistic
+#
+# At threshold 1 those three single links merged Husband, Wife and
+# Realistic into the memorial cluster, dragging 10 unrelated keywords
+# with them -- "gifts for husband", "gifts for wife", "realistic
+# figurine", "pet figurine" -- and produced one incoherent 55-keyword
+# cluster that no single page could serve.
+#
+# At 2, only genuinely overlapping topics merge.
+MIN_COOCCURRENCE_WEIGHT = 2
+
+
+def build_cooccurrence(db: DatabaseManager) -> int:
     """
-    Project entity co-occurrence graph for clustering and run Louvain algorithm via GDS.
-    Constraint: Project entity co-occurrence graph (entities in same Chunk), NOT extracted relationships.
-    Assigns (:__Entity__)-[:IN_CLUSTER]->(:Cluster)
+    Materialise (:__Entity__)-[:CO_OCCURS_WITH]-(:__Entity__).
+
+    Weight is the number of keywords that are about both entities.
+    Pairs below MIN_COOCCURRENCE_WEIGHT are not written at all, so the
+    clustering never sees them.
+
+    Undirected: written once per pair via the elementId ordering, then
+    always matched without a direction.
     """
-    logger.info("Projecting Entity co-occurrence graph and running Louvain clustering...")
+    db.execute_query("MATCH ()-[r:CO_OCCURS_WITH]-() DELETE r")
 
-    # Step 1: Materialize CO_OCCURRED relationship in graph
-    cypher_cooccurrence = """
-    MATCH (c:Chunk)-[:FROM_CHUNK]-(e1:__Entity__)
-    MATCH (c)-[:FROM_CHUNK]-(e2:__Entity__)
-    WHERE elementId(e1) < elementId(e2)
-    WITH e1, e2, count(c) AS co_occurrences
-    MERGE (e1)-[r:CO_OCCURRED]-(e2)
-    SET r.weight = co_occurrences
-    RETURN count(r) as cooccurrence_edges
-    """
-
-    try:
-        db.execute_query(cypher_cooccurrence)
-    except Exception as e:
-        logger.warning(f"Co-occurrence materialization note: {e}")
-
-    # Step 2: GDS Louvain Community Detection
-    graph_name = "entityCooccurrenceGraph"
-    
-    # Drop projection if exists
-    try:
-        db.execute_query(f"CALL gds.graph.drop('{graph_name}', false);")
-    except Exception:
-        pass
-
-    # Project cooccurrence graph
-    project_query = """
-    CALL gds.graph.project(
-        $graph_name,
-        '__Entity__',
-        {
-            CO_OCCURRED: {
-                type: 'CO_OCCURRED',
-                orientation: 'UNDIRECTED',
-                properties: 'weight'
-            }
-        }
+    result = db.execute_query(
+        """
+        MATCH (e1:__Entity__)<-[:ABOUT]-(k:Keyword)-[:ABOUT]->(e2:__Entity__)
+        WHERE elementId(e1) < elementId(e2)
+        WITH e1, e2, count(k) AS shared
+        WHERE shared >= $min_weight
+        MERGE (e1)-[r:CO_OCCURS_WITH]-(e2)
+        SET r.weight = shared
+        RETURN count(r) AS edges
+        """,
+        {"min_weight": MIN_COOCCURRENCE_WEIGHT},
     )
-    """
+    edges = result[0]["edges"] if result else 0
+    logger.info(
+        "Co-occurrence: %d entity pairs share >= %d keywords.",
+        edges, MIN_COOCCURRENCE_WEIGHT,
+    )
+    return edges
 
-    # Run Louvain
-    louvain_query = """
-    CALL gds.louvain.write(
-        $graph_name,
-        {
+
+def run_louvain(db: DatabaseManager) -> Dict[str, Any]:
+    """
+    Assign each entity a community id via GDS Louvain.
+
+    Returns the real communityCount and modularity that GDS reports. If
+    GDS is unavailable this raises -- it does not substitute a plausible
+    number and carry on (CLAUDE.md rule 9).
+    """
+    try:
+        db.execute_query(f"CALL gds.graph.drop('{GRAPH_NAME}', false)")
+    except Exception:
+        pass  # not projected yet -- expected on a first run
+
+    db.execute_query(
+        f"""
+        CALL gds.graph.project(
+            '{GRAPH_NAME}',
+            '__Entity__',
+            {{ CO_OCCURS_WITH: {{ orientation: 'UNDIRECTED', properties: 'weight' }} }}
+        )
+        """
+    )
+
+    stats = db.execute_query(
+        f"""
+        CALL gds.louvain.write('{GRAPH_NAME}', {{
             writeProperty: 'community',
             relationshipWeightProperty: 'weight'
-        }
-    )
-    YIELD communityCount, modularity, modularities
-    """
-
-    # Fallback Cypher clustering if GDS is not installed / in local mock mode
-    fallback_clustering = """
-    MATCH (e:__Entity__)
-    WITH e, coalesce(e.type, 'Topic') AS community_type
-    MERGE (cl:Cluster {id: 'cluster_' + community_type})
-    ON CREATE SET cl.name = community_type + ' Cluster', cl.createdAt = timestamp()
-    MERGE (e)-[:IN_CLUSTER]->(cl)
-    RETURN count(DISTINCT cl) AS communityCount, 0.72 AS modularity
-    """
-
-    try:
-        db.execute_query(project_query, {"graph_name": graph_name})
-        res = db.execute_query(louvain_query, {"graph_name": graph_name})
-        
-        community_count = res[0]["communityCount"] if res else 0
-        modularity = res[0]["modularity"] if res else 0.0
-
-        # Create Cluster nodes and IN_CLUSTER relationships from community property
-        cypher_create_clusters = """
-        MATCH (e:__Entity__)
-        WHERE e.community IS NOT NULL
-        WITH e, toString(e.community) AS comm_id
-        MERGE (cl:Cluster {id: 'cluster_' + comm_id})
-        ON CREATE SET cl.name = 'Cluster ' + comm_id, cl.createdAt = timestamp()
-        MERGE (e)-[:IN_CLUSTER]->(cl)
+        }})
+        YIELD communityCount, modularity
+        RETURN communityCount, modularity
         """
-        db.execute_query(cypher_create_clusters)
+    )[0]
 
-        logger.info(f"GDS Louvain complete: {community_count} clusters created with modularity {modularity:.4f}.")
-        return {"clusterCount": community_count, "modularity": modularity}
+    db.execute_query(f"CALL gds.graph.drop('{GRAPH_NAME}', false)")
 
-    except Exception as e:
-        logger.warning(f"GDS Louvain failed/not available: {e}. Executing standard graph community clustering...")
-        res = db.execute_query(fallback_clustering)
-        c_count = res[0]["communityCount"] if res else 0
-        mod = res[0]["modularity"] if res else 0.0
-        return {"clusterCount": c_count, "modularity": mod}
+    logger.info(
+        "Louvain: %d communities across all entities, modularity %.4f",
+        stats["communityCount"], stats["modularity"],
+    )
+    return stats
 
 
-def run_pagerank_and_link_candidates(db: DatabaseManager):
+def build_clusters(db: DatabaseManager) -> List[Dict[str, Any]]:
     """
-    Calculate PageRank on entities & pages to identify core topic authority and link candidates.
-    (:Page)-[:SHOULD_LINK_TO]->(:Page)
+    Turn communities into (:Cluster) nodes -- but only those that
+    actually carry keyword demand.
+
+    An entity nobody searches for cannot justify a page, so communities
+    with zero keywords are skipped rather than becoming empty clusters
+    that Phase 6.2 would then have to filter out again.
     """
-    logger.info("Computing PageRank authority & identifying internal link candidates...")
+    db.execute_query("MATCH (c:Cluster) DETACH DELETE c")
 
-    # Calculate PageRank on entities based on keyword ABOUT edges
-    cypher_pagerank = """
-    MATCH (e:__Entity__)
-    OPTIONAL MATCH (k:Keyword)-[:ABOUT]->(e)
-    WITH e, count(k) AS keyword_degree, sum(coalesce(k.search_volume, 0)) as total_volume
-    SET e.pageRank = keyword_degree * 1.5 + log10(total_volume + 1.0)
-    """
-    db.execute_query(cypher_pagerank)
+    rows = db.execute_query(
+        """
+        MATCH (k:Keyword)-[:ABOUT]->(e:__Entity__)
+        MATCH (k)-[:HAS_INTENT]->(i:Intent)
+        WHERE e.community IS NOT NULL
+        RETURN e.community AS community,
+               e.name AS entity, e.type AS entity_type,
+               k.normalized AS keyword, i.name AS intent
+        """
+    )
+    if not rows:
+        raise RuntimeError(
+            "No keyword->entity->community paths found. "
+            "Run the vault, keyword and link steps first."
+        )
 
-    # Derive SHOULD_LINK_TO between Pages that share clusters/entities
-    cypher_link_candidates = """
-    MATCH (p1:Page)<-[:TARGETS]-(k1:Keyword)-[:ABOUT]->(e:__Entity__)<-[:ABOUT]-(k2:Keyword)-[:TARGETS]->(p2:Page)
-    WHERE elementId(p1) <> elementId(p2)
-    WITH p1, p2, count(DISTINCT e) AS shared_entities
-    WHERE shared_entities >= 2
-    MERGE (p1)-[r:SHOULD_LINK_TO]->(p2)
-    SET r.shared_entities = shared_entities, r.updatedAt = timestamp()
-    RETURN count(r) AS link_candidates
-    """
-    res = db.execute_query(cypher_link_candidates)
-    created = res[0]["link_candidates"] if res else 0
-    logger.info(f"Identified {created} SHOULD_LINK_TO candidates across site structure.")
+    # Fold the flat rows into one record per community.
+    grouped: Dict[Any, Dict[str, Any]] = defaultdict(
+        lambda: {"entities": {}, "keywords": set(), "intents": defaultdict(int)}
+    )
+    for r in rows:
+        g = grouped[r["community"]]
+        g["entities"][r["entity"]] = r["entity_type"]
+        g["keywords"].add(r["keyword"])
+        g["intents"][r["intent"]] += 1
+
+    cluster_rows = []
+    for community, g in grouped.items():
+        # Name the cluster after the entity carrying the most keywords,
+        # so "Memorial / Loss + Pet" reads as Memorial rather than Pet.
+        per_entity = defaultdict(int)
+        for r in rows:
+            if r["community"] == community:
+                per_entity[r["entity"]] += 1
+        lead = max(per_entity, key=per_entity.get)
+
+        others = [e for e in g["entities"] if e != lead]
+        name = lead if not others else f"{lead} + {' + '.join(sorted(others))}"
+
+        cluster_rows.append({
+            "id": f"cluster_{community}",
+            "name": name,
+            "lead_entity": lead,
+            "entity_names": sorted(g["entities"]),
+            "entity_types": sorted(set(g["entities"].values())),
+            "keyword_count": len(g["keywords"]),
+            "dominant_intent": max(g["intents"], key=g["intents"].get),
+        })
+
+    cluster_rows.sort(key=lambda c: -c["keyword_count"])
+
+    db.batch_write(
+        """
+        UNWIND $rows AS row
+        MERGE (c:Cluster {id: row.id})
+        SET c.name = row.name,
+            c.lead_entity = row.lead_entity,
+            c.entity_types = row.entity_types,
+            c.keyword_count = row.keyword_count,
+            c.dominant_intent = row.dominant_intent,
+            c.updatedAt = timestamp()
+        WITH c, row
+        UNWIND row.entity_names AS entity_name
+        MATCH (e:__Entity__ {name: entity_name})
+        MERGE (e)-[:IN_CLUSTER]->(c)
+        """,
+        cluster_rows,
+    )
+    logger.info("Built %d clusters carrying keyword demand.", len(cluster_rows))
+    return cluster_rows
 
 
-def analyze_clusters():
+def report(db: DatabaseManager, clusters: List[Dict[str, Any]]) -> None:
+    total_kw = db.execute_query("MATCH (k:Keyword) RETURN count(*) AS n")[0]["n"]
+    covered = sum(c["keyword_count"] for c in clusters)
+
+    print("\n" + "=" * 72)
+    print("PHASE 6.1 -- TOPIC CLUSTERS")
+    print("=" * 72)
+    print(f"  {len(clusters)} clusters covering {covered} of {total_kw} keywords\n")
+    print(f"  {'#':>3}  {'keywords':>8}  {'intent':<14} cluster")
+    print(f"  {'-'*3}  {'-'*8}  {'-'*14} {'-'*40}")
+    for i, c in enumerate(clusters, 1):
+        print(f"  {i:>3}  {c['keyword_count']:>8}  {c['dominant_intent']:<14} {c['name']}")
+
+    merged = [c for c in clusters if " + " in c["name"]]
+    print(f"\n  {len(merged)} cluster(s) merge more than one entity:")
+    for c in merged:
+        print(f"    {c['name']}  ({c['keyword_count']} keywords)")
+    print()
+
+
+def analyze_clusters() -> List[Dict[str, Any]]:
     db = DatabaseManager()
-    cluster_stats = run_entity_cooccurrence_clustering(db)
-    run_pagerank_and_link_candidates(db)
-    db.close()
-    return cluster_stats
+    try:
+        build_cooccurrence(db)
+        run_louvain(db)
+        clusters = build_clusters(db)
+        report(db, clusters)
+        return clusters
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":
