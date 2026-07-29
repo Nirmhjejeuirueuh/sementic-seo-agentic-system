@@ -1,4 +1,6 @@
 """
+Connect Keyword → Entity (the join)
+
 "The join": (:Keyword)-[:ABOUT]->(:__Entity__)
 
 This is the relationship the whole project exists for. Without it there

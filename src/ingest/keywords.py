@@ -1,4 +1,6 @@
 """
+	Turn the CSV into (Keyword) nodes + assign intent
+
 Keyword loader: reads data/keywords.csv and writes (:Keyword) nodes,
 each classified into exactly one (:Intent) bucket.
 
