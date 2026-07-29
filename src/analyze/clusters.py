@@ -77,6 +77,26 @@ GRAPH_NAME = "entity_cooccurrence"
 # At 2, only genuinely overlapping topics merge.
 MIN_COOCCURRENCE_WEIGHT = 2
 
+# Tie-break order for a cluster's dominant intent.
+#
+# Needed because ties are common in small clusters: Husband and Wife each
+# hold exactly one informational and one transactional keyword. Picking
+# with a bare max() over a dict resolves those by insertion order, so two
+# structurally identical clusters were getting different intents and then
+# different page types. Commercial value descending -- if a page can
+# convert, treat it as a page that should convert.
+INTENT_PRECEDENCE = ["transactional", "commercial", "informational", "navigational"]
+
+
+def _dominant_intent(counts: Dict[str, int]) -> str:
+    """Highest count wins; ties broken by INTENT_PRECEDENCE, never by luck."""
+    best = max(counts.values())
+    tied = [i for i, n in counts.items() if n == best]
+    for intent in INTENT_PRECEDENCE:
+        if intent in tied:
+            return intent
+    return tied[0]
+
 
 def build_cooccurrence(db: DatabaseManager) -> int:
     """
@@ -211,7 +231,7 @@ def build_clusters(db: DatabaseManager) -> List[Dict[str, Any]]:
             "entity_names": sorted(g["entities"]),
             "entity_types": sorted(set(g["entities"].values())),
             "keyword_count": len(g["keywords"]),
-            "dominant_intent": max(g["intents"], key=g["intents"].get),
+            "dominant_intent": _dominant_intent(g["intents"]),
         })
 
     cluster_rows.sort(key=lambda c: -c["keyword_count"])
