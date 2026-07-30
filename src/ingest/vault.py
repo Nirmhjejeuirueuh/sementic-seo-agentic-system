@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Tuple
 
 import yaml
 
-from src.config import ALLOWED_NODE_LABELS, ALLOWED_RELATIONSHIPS
+from src.config import ALLOWED_NODE_LABELS, ALLOWED_RELATIONSHIPS, normalize_keyword
 from src.db import DatabaseManager, embed_texts
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-7s %(message)s")
@@ -121,6 +121,23 @@ def ingest_vault(directory: str, db: DatabaseManager) -> None:
             # people search "football figurine". Used by the
             # Keyword -> Entity join in src/enrich/link_keywords.py.
             "aliases": fm.get("aliases") or [],
+            # Auto-derived aliases (entity_aliases() in link_keywords.py
+            # splits a "/"-titled entity into its parts) that should NOT
+            # apply to this entity, because they turned out too generic
+            # for one specific case -- see memorial-loss.md.
+            "exclude_aliases": fm.get("exclude_aliases") or [],
+            # Specific keyword strings that must NOT link to this entity,
+            # even though normal alias matching would connect them.
+            # Different from exclude_aliases: that suppresses a whole
+            # word for every keyword; this suppresses one exact keyword
+            # for this entity only, leaving the word itself intact for
+            # every other keyword. Needed when a keyword is unavoidably
+            # about a different entity but happens to contain a word
+            # this entity can't give up -- see memorial-loss.md, where
+            # "memorial" must stay a match for 44 other keywords.
+            "exclude_keywords": [
+                normalize_keyword(k) for k in (fm.get("exclude_keywords") or [])
+            ],
             "season": fm.get("season"),
             "caution": fm.get("caution"),
             "source_section": fm.get("source_section"),
@@ -194,6 +211,8 @@ def ingest_vault(directory: str, db: DatabaseManager) -> None:
             e.primary_keyword = row.primary_keyword,
             e.keywords = row.keywords,
             e.aliases = row.aliases,
+            e.exclude_aliases = row.exclude_aliases,
+            e.exclude_keywords = row.exclude_keywords,
             e.season = row.season,
             e.caution = row.caution,
             e.source_section = row.source_section,

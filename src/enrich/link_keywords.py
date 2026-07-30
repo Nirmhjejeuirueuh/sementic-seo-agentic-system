@@ -91,7 +91,9 @@ def link_pass1_exact(db: DatabaseManager) -> int:
     logger.info("Pass 1: whole-word matching keyword -> entity...")
 
     entities = db.execute_query(
-        "MATCH (e:__Entity__) RETURN e.name AS name, e.type AS type, e.aliases AS aliases"
+        "MATCH (e:__Entity__) RETURN e.name AS name, e.type AS type, "
+        "e.aliases AS aliases, e.exclude_aliases AS exclude_aliases, "
+        "e.exclude_keywords AS exclude_keywords"
     )
     keywords = db.execute_query(
         "MATCH (k:Keyword) RETURN k.normalized AS normalized"
@@ -110,14 +112,23 @@ def link_pass1_exact(db: DatabaseManager) -> int:
     # title is the only thing we can match on, and the join misses every
     # keyword that uses the customer's word instead of the catalogue's.
     compiled = []
+    exclude_keywords_by_entity: Dict[str, set] = {}
     for e in entities:
         forms = set(entity_aliases(e["name"]))
         for extra in (e.get("aliases") or []):
             cleaned = str(extra).strip().lower()
             if len(cleaned) >= MIN_ALIAS_LEN:
                 forms.add(cleaned)
+        # Auto-derived forms an entity has opted out of -- see
+        # exclude_aliases in vault.py / memorial-loss.md for why this
+        # exists: a "/"-split word can be too generic for one specific
+        # entity even though the same splitting is correct everywhere
+        # else (e.g. "Trophy / Award" -> "trophy", "award" is fine).
+        for excluded in (e.get("exclude_aliases") or []):
+            forms.discard(str(excluded).strip().lower())
         for alias in sorted(forms):
             compiled.append((e["name"], alias, alias_pattern(alias)))
+        exclude_keywords_by_entity[e["name"]] = set(e.get("exclude_keywords") or [])
 
     rows: List[Dict[str, Any]] = []
     seen = set()
@@ -125,6 +136,14 @@ def link_pass1_exact(db: DatabaseManager) -> int:
         normalized = kw["normalized"]
         for entity_name, alias, pattern in compiled:
             if pattern.search(normalized):
+                # exclude_keywords: this exact keyword is unavoidably
+                # about a different entity, but happens to contain a
+                # word this entity can't give up for every OTHER
+                # keyword -- see memorial-loss.md. A per-entity word
+                # exclusion (exclude_aliases) can't express "except this
+                # one keyword"; this can.
+                if normalized in exclude_keywords_by_entity.get(entity_name, ()):
+                    continue
                 pair = (normalized, entity_name)
                 if pair in seen:
                     continue
