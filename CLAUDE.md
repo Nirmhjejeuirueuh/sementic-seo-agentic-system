@@ -163,7 +163,7 @@ See `README.md` for full setup and `progress-tracker.md` for current state.
 
 ---
 
-## Current state (2026-07-28)
+## Current state (2026-07-30)
 
 - **Phase 0 (infrastructure): done and verified.**
 - **Phase 1 (repair pipeline modules): in progress.** Five modules still
@@ -194,13 +194,29 @@ See `README.md` for full setup and `progress-tracker.md` for current state.
   by default — measured ~1 correct in 14 on this dataset, for structural
   reasons explained in its docstring. The 35 unlinked keywords are
   mostly generic head terms and are the input to Phase 6.
-- **Phase 6+ (site structure, page agent, internal linking): not
-  started.** Two handover modules still need rewriting when their phase
-  arrives: `src/analyze/clusters.py` (invented PageRank formula,
-  hardcoded modularity) and `src/agents/context.py` (hardcoded sample
-  keywords/passages). `src/agents/page_graph.py` additionally imports
-  `GEMINI_API_KEY`, which no longer exists in `config.py`, so it cannot
-  currently be imported at all.
+- **Phase 6 (site structure): done.** `src/analyze/clusters.py`
+  rewritten to use real GDS Louvain community detection (replacing the
+  handover's invented PageRank formula) — 32 clusters. New
+  `src/analyze/site_structure.py` assigns a page type + action per
+  cluster using the mentor's own IF/THEN rules. New
+  `src/analyze/route_orphans.py` routes head-term keywords that matched
+  no single entity to the homepage/blog, or flags them as real
+  catalogue gaps.
+- **Phase 7 (page-writing agent): done.** LangGraph brief→draft→
+  critique→revise loop on **Gemini** (`gemini-2.5-flash`), the user's
+  explicit provider choice. `src/agents/context.py` rewritten — no
+  hardcoded fallbacks, and now enforces a minimum real-evidence length
+  (`MIN_EVIDENCE_CHARS = 140`) after a thin vault note was found to
+  produce a fluent but fully invented page. `src/agents/page_graph.py`
+  had 4 fake-fallback blocks removed (rule 9) and a duplicate-Page-node
+  bug fixed. **All 32 of 32 clusters now have a real, generated page**
+  in `output/*.md`; local and DigitalOcean remote are verified
+  byte-identical. See `CHANGELOG.md` for the full bug list.
+- **Phase 8 (internal linking, structured data): not started.** Every
+  generated page currently has 0 internal links —
+  `plan_links_node` only does verbatim anchor-text matching against
+  sibling page names, a stopgap until real `SHOULD_LINK_TO` links
+  (shared entities / PageRank) are built.
 
 ### Keyword vocabulary vs. catalogue vocabulary
 

@@ -1,6 +1,6 @@
 # Progress Tracker
 
-Last updated: **2026-07-28**
+Last updated: **2026-07-30**
 
 A plain-language view of what is done, what is next, and what is blocking.
 For the technical detail behind each change, see `CHANGELOG.md`.
@@ -24,8 +24,8 @@ figurine domain.
 | 4 | Ingest the vault into the graph | ✅ **Done &amp; verified** |
 | 4b | Deploy a copy to DigitalOcean | ✅ **Done** |
 | 5 | Keywords + intent + the join | ✅ **Done — 76.2% coverage** |
-| 6 | Site structure from the graph | ⬜ Not started |
-| 7 | The page-writing agent | ⬜ Not started |
+| 6 | Site structure from the graph | ✅ **Done — 32 clusters** |
+| 7 | The page-writing agent | ✅ **Done — 32/32 pages generated** |
 | 8 | Internal linking + structured data | ⬜ Not started |
 
 ---
@@ -167,24 +167,79 @@ the module docstring and `CHANGELOG.md`.
 
 ---
 
-## ⬜ Phases 6–8 — Not started
+## ✅ Phase 6 — Site structure (DONE)
 
-- **6. Site structure** — cluster keywords by the entity they're `ABOUT`,
-  then decide page type per cluster using the mentor's own IF/THEN rules
-  (transactional + product → collection page; "vs"/"compare" →
-  comparison; question keywords → blog). His **task 2**.
-- **7. Page agent** — the LangGraph brief→draft→critique→revise loop.
-  His **task 3**. `src/agents/context.py` must be rewritten first (it
-  returns hardcoded sample data), and `page_graph.py` currently imports
-  `GEMINI_API_KEY`, which no longer exists.
-- **8. Internal linking + structured data** — `SHOULD_LINK_TO` from
-  shared entities, plus JSON-LD per page type. His **task 4**.
+His **task 2**: turn the keyword→entity join into an actual site plan.
+
+- [x] **6.1** — `src/analyze/clusters.py` rewritten to use real GDS
+      Louvain community detection on entity co-occurrence (replacing the
+      handover's invented PageRank formula). 32 clusters.
+- [x] **6.2** — new `src/analyze/site_structure.py` assigns a page type
+      and action to every cluster using the mentor's own IF/THEN rules,
+      plus `pick_head_term()` to choose the real primary keyword per
+      cluster (not just the alphabetically-first one).
+- [x] **6.3** — new `src/analyze/route_orphans.py` routes head-term
+      keywords that matched no single entity to the homepage or `/blog`,
+      and flags genuine catalogue gaps (resin, a "car" prop) instead of
+      silently routing them anywhere.
+
+```
+32 clusters, each with a page type + action
+orphan keywords routed or flagged as real content gaps, not guessed
+```
+
+---
+
+## ✅ Phase 7 — The page-writing agent (DONE — 32/32 pages generated)
+
+His **task 3**: the LangGraph brief→draft→critique→revise loop, grounded
+in the graph. Provider is **Gemini** (`gemini-2.5-flash`), the user's
+explicit choice.
+
+- [x] `src/agents/context.py` rewritten — no more hardcoded sample
+      fallbacks; raises if a cluster's graph data is missing or
+      (new) too thin to ground a real page in
+      (`MIN_EVIDENCE_CHARS = 140`, calibrated from 6 hand-checked
+      clusters).
+- [x] `src/agents/page_graph.py` — 4 fake-fallback blocks removed
+      (rule 9); wrong-primary-keyword, document-ID-leak, and
+      duplicate-Page-node bugs found and fixed by reading real
+      generated output, not just checking exit codes.
+- [x] The `Memorial / Loss` cluster's pet/human-bereavement mixing
+      fixed — split into two vault entities plus a new
+      `exclude_keywords:` mechanism for the 3 keywords that bridged
+      them.
+- [x] All 32 clusters now have a real, generated page in `output/*.md`.
+      12 of them needed real content written into their vault notes
+      first (sourced from the live getfiguro.com site, not invented)
+      before they cleared the evidence guard.
+- [x] Local and DigitalOcean remote databases verified byte-identical
+      after syncing: 147 keywords, 83 entities, 82 chunks, 32 clusters,
+      75 pages.
+
+```
+32/32 clusters generated
+6 real bugs found and fixed (fake fallbacks, wrong keyword, ID leak,
+  duplicate pages, thin-evidence hallucination, mixed-audience cluster)
+```
+
+---
+
+## ⬜ Phase 8 — Not started
+
+**Internal linking + structured data**, his **task 4**:
+- `SHOULD_LINK_TO` relationships from shared entities / real PageRank
+  (today `plan_links_node` only does verbatim anchor-text matching
+  against sibling page names, and has proposed 0 links on every page
+  generated so far — this is the actual gap it needs to fill).
+- JSON-LD structured data per page type.
 
 ---
 
 ## What to do manually right now
 
-1. **Review Phase 5** on the `feature/keyword-graph-and-agent` branch —
+1. **Review Phase 6 and 7** on the `feature/keyword-graph-and-agent`
+   branch, and read a few of the 32 generated pages in `output/*.md` —
    nothing is merged to `main` or pushed yet.
 2. **Confirm 2 truncated URLs** against the live Getfiguro site and fill
    them into `products/dust-proof-acrylic-display-box.md` and
@@ -200,12 +255,12 @@ the module docstring and `CHANGELOG.md`.
 .\run.ps1 browser
 ```
 
-See the join in Neo4j Browser:
+See a generated page's cluster in Neo4j Browser:
 ```cypher
-MATCH (k:Keyword)-[:ABOUT]->(e:__Entity__ {name:'Memorial / Loss'})
-RETURN k, e
+MATCH (p:Page {draft_status: 'draft'})-[:COVERS]->(cl:Cluster)
+RETURN p, cl
 ```
 
-The next decision is **Phase 6 scope** — whether to route the 35
-unlinked head terms ("custom figurine", "buy custom figurine") to
-site-level pages, which is what they actually want to be.
+The next decision is **Phase 8 scope** — real internal linking from
+shared entities, and how much structured-data markup to generate per
+page type.

@@ -7,6 +7,183 @@ Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## [Phase 7 — The page-writing agent] — 2026-07-30
+
+Branch: `feature/keyword-graph-and-agent`. The mentor's **task 3**: a
+LangGraph agent that drafts a full page per cluster, grounded in the
+graph rather than general knowledge. Provider is **Gemini**
+(`gemini-2.5-flash`), chosen by the user over Anthropic/OpenAI — an
+explicit `AGENT_PROVIDER` setting in `src/config.py`, mirroring the
+existing `EMBEDDING_PROVIDER` pattern rather than guessing from which
+key happens to be present.
+
+### Wired up
+- `get_llm()` dispatches on `AGENT_PROVIDER` explicitly. The handover
+  code tried Anthropic, then OpenAI, then Gemini with a dummy key,
+  silently — removed.
+- Fixed a real `.env` bug: `os.getenv("AGENT_MODEL", "").strip() or
+  _AGENT_MODEL_DEFAULTS[provider]`. The two-arg `os.getenv` form is
+  wrong here because `.env` sets `AGENT_MODEL=` (present but blank),
+  which `os.getenv` does not treat as absent, so the intended
+  per-provider default was silently never applied.
+
+### Removed: 4 fake-fallback blocks (rule 9)
+`write_brief_node`, `draft_node`, `critique_node`, `revise_node` each
+had an `except` branch that invented generic content and reported
+success when the real LLM call failed — the same shape of bug as Phase
+0's fake embeddings. All four now raise instead.
+
+### Fixed: 3 real bugs, found by reading actual output rather than
+trusting exit codes
+1. **Wrong primary keyword.** `write_brief_node` picked
+   `keywords_list[0]` (alphabetically first) instead of the cluster's
+   real head term — e.g. `angel memorial figurine` instead of
+   `memorial figurine` for a 49-keyword cluster. Fixed by reusing
+   `pick_head_term()` from `site_structure.py`.
+2. **Document-ID leak.** Evidence was formatted as
+   `f"Source [{doc}]: {passage}"`, and literal tags like
+   `[vault_FigurineType]` were leaking into customer-facing prose.
+   Fixed by numbering evidence plainly and adding an explicit
+   no-citation-markers instruction to the prompt.
+3. **Duplicate Page nodes.** `persist_node` `MERGE`d a new `Page` keyed
+   on an LLM-invented slug instead of updating the real page Phase 6.2
+   had already planned. Hit 4 of 6 real test clusters, and once
+   corrupted a real page's `status` (`existing` → `draft`) when the
+   invented slug happened to collide with the real one. Fixed to
+   `MATCH (p:Page)-[:COVERS]->(cl:Cluster {id: $cluster_id})` and find
+   the real page first; added a separate `draft_status` property so
+   the agent's own tracking never touches the real `status` field.
+
+### Added: minimum-evidence-length guard (`src/agents/context.py`)
+Batch-testing surfaced a failure mode no earlier fix caught: a cluster
+with real but too-thin evidence (a one-line Phase-3 planning stub, e.g.
+"High-volume, evergreen. No page exists yet.") produced a fluent,
+confident, completely made-up page — the agent fell back on its own
+training data instead of the graph. `MIN_EVIDENCE_CHARS = 140`,
+calibrated from 6 hand-checked real clusters, not guessed:
+```
+67  chars -- Birthday   -- FAILED (fully ungrounded page)
+112 chars -- Boyfriend  -- FAILED (4 dead "not covered" sections)
+167 chars -- Wedding             -- worked
+360 chars -- Corporate + Trophy  -- worked
+369 chars -- Custom Figurine from Photo -- worked
+418 chars -- Cake Topper         -- worked
+```
+An earlier guess of 200 wrongly blocked the real, good 167-char Wedding
+cluster — length alone doesn't cleanly separate these, but this
+specific gap does.
+
+### Fixed: Memorial/Loss cluster mixing pet and human bereavement
+The `Memorial / Loss` entity's 49 keywords spanned both pet-loss and
+human-bereavement searches; the first generated page was 100%
+pet-focused, silently dropping the human-bereavement half. Three
+escalating fixes, each measured before moving to the next:
+1. `exclude_aliases: [loss]` on Memorial/Loss — reduced but didn't
+   eliminate contamination (co-occurrence still merged via the shared
+   word "memorial").
+2. Split into two vault entities — new
+   `data/vault/occasions/loved-ones.md` for human bereavement,
+   reassigning the existing "Personalized 3D Tribute Figurine for
+   Memorials" product (previously untagged, 0 keywords, invisible) to
+   it.
+3. New `exclude_keywords:` mechanism (entity-level, exact-string
+   exclusion) in `link_keywords.py` + `vault.py` — removes 3 specific
+   keywords that literally contain the word "memorial" (needed by 44
+   other pet-cluster keywords, so it can't be excluded as an alias) but
+   are conceptually human-bereavement, not pet.
+Verified: two fully separate clusters, zero forced overlap (one
+keyword, "pet remembrance gift", legitimately appears in both by
+choice, below the merge threshold).
+
+### Page generation: 32 of 32 clusters
+- First pass generated and hand-reviewed 6 pages for grounding and
+  cannibalisation before batch-running the rest.
+- Batch run over the remaining 26: 14 passed the evidence guard
+  immediately; 12 were blocked by thin Phase-3 planning-stub notes
+  (Mother's Day, Father's Day, Anniversary, Valentine's Day,
+  Graduation, Retirement, Birthday, the Anniversary couple product,
+  Boyfriend, Girlfriend, Dad, Sports).
+- Wrote real content into those 12 vault notes, sourced directly from
+  the live getfiguro.com site (product descriptions, dedicated blog
+  posts, one full customer story, verified reviews) rather than
+  inventing plausible-sounding copy — every fact traceable to a
+  specific live URL, cited in each note's `source_section`. Re-ingested
+  and regenerated: all 12 passed cleanly, 0 failures.
+- Result: **32/32 clusters have a real, grounded, generated page** in
+  `output/*.md`.
+
+### DigitalOcean remote sync
+- New `scripts/sync_page_metadata.py` — copies generated-page metadata
+  (`title`, `draft_status`, `coverage_score`) from local onto the
+  matching remote `Page` nodes, matched by `url` rather than
+  `cluster_id` (GDS Louvain's internal community numbering is not
+  guaranteed to land on the same integers across two independent runs
+  on the same data, even though the resulting clusters are the same).
+- Full ingest chain (`vault` → `keywords` → `link_keywords` →
+  `clusters` → `site_structure` → `route_orphans`) re-run against the
+  remote to pick up the new vault content, then the metadata sync.
+- Found and fixed one pre-existing discrepancy: a `/blog/wife` orphan
+  page existed locally with zero incoming keyword references and no
+  `Cluster` link — a leftover from before `recipients/wife.md`
+  existed, when "wife" keywords had nowhere real to go. Deleted (not
+  pushed) once confirmed genuinely dead.
+- Verified byte-identical on both databases: 147 keywords, 83 entities,
+  82 chunks, 32 clusters, 75 pages, 6 documents, 3 intents.
+
+### Known follow-up
+- Internal linking (`plan_links_node`) only does verbatim anchor-text
+  matching against sibling page names — 0 links proposed on every
+  generated page so far. Real relevance-based linking
+  (`SHOULD_LINK_TO` from shared entities / PageRank) is Phase 8, not
+  built yet.
+
+---
+
+## [Phase 6 — Site structure: clusters, page types, orphan routing] — 2026-07-29 to 2026-07-30
+
+Branch: `feature/keyword-graph-and-agent`. Turns the Phase 5
+keyword→entity join into an actual site plan: which pages should exist,
+what kind of page each one is, and where the head-term keywords that
+matched no single entity should go. Covers the mentor's **task 2**.
+
+### 6.1 — Topic clusters from keyword co-occurrence (`src/analyze/clusters.py`, rewritten)
+- Replaced the handover's invented PageRank formula and hardcoded
+  modularity value with real GDS Louvain community detection over
+  entity co-occurrence — two entities co-occur when the same keyword is
+  `ABOUT` both (CLAUDE.md rule 6: cluster on co-occurrence, not
+  extracted relationships).
+- `MIN_COOCCURRENCE_WEIGHT = 2` (raised from an initial 1) to stop
+  single-shared-keyword false merges.
+- Generic/untagged Products (no outgoing taxonomy relationship)
+  excluded from co-occurrence merging entirely — they're horizontal
+  catalogue-wide concepts, not vertical topics.
+- `_dominant_intent()` with an explicit `INTENT_PRECEDENCE` tie-break
+  order.
+- Result: 32 clusters.
+
+### 6.2 — Page type & action per cluster (new `src/analyze/site_structure.py`)
+- `pick_head_term()` — picks the keyword contained as a substring by
+  the most *other* keywords in the cluster, not the shortest or the
+  first one alphabetically.
+- Applies the mentor's own IF/THEN rules literally. Fixed one rule from
+  `informational OR question-term-present` to `informational` alone
+  (his actual AND) — a single keyword containing "ideas" had wrongly
+  flipped a mostly-transactional Wedding cluster into a blog page.
+
+### 6.3 — Orphan keyword routing (new `src/analyze/route_orphans.py`)
+- Routes keywords that matched no single entity in Phase 5 (mostly
+  generic head terms like "custom figurine") to `homepage` (`/`) or
+  `blog` (`/blog`) rather than leaving them unattached.
+- Genuine catalogue gaps (missing entities — resin as a material, a
+  "car" prop) are flagged, not silently routed anywhere; not invented,
+  since they need a real source, not a guess.
+
+### Verified
+32 clusters, each assigned a page type and action per the mentor's
+rules; orphan keywords routed or flagged as real gaps.
+
+---
+
 ## [Phase 5 — Keywords, intent, and "the join"] — 2026-07-28
 
 Branch: `feature/keyword-graph-and-agent`.
