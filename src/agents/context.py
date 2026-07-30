@@ -148,6 +148,43 @@ def fetch_agent_context(cluster_id: str, db: DatabaseManager) -> Dict[str, Any]:
             f"produced exactly one Chunk (src/ingest/vault.py) -- this "
             f"means chunks are missing or FROM_CHUNK is broken."
         )
+
+    # Non-empty is not the same as enough. Vault notes for `proposed`
+    # (not-yet-built) entities were written during Phase 3 as planning
+    # flags for a human -- e.g. the entire "Birthday" note is "High-
+    # volume, evergreen. No page exists yet -- this is a content gap."
+    # (67 characters). Draft_node's grounding instruction stops the LLM
+    # from inventing FACTS, but with this little real material it still
+    # writes fluent, confident, generic gift-guide prose from its own
+    # training data instead -- a page that never mentions Getfiguro,
+    # figurines, or photos at all. That's a worse failure than an empty
+    # page: it looks finished.
+    #
+    # 140 chars is the midpoint of a measured gap, not a guess. Six real
+    # clusters were generated and hand-checked before this threshold was
+    # set:
+    #     67  chars -- Birthday   -- FAILED (fully ungrounded page)
+    #     112 chars -- Boyfriend  -- FAILED (4 dead "not covered" sections)
+    #     167 chars -- Wedding    -- worked
+    #     360 chars -- Corporate+Trophy -- worked
+    #     369 chars -- Custom Figurine from Photo -- worked
+    #     418 chars -- Cake Topper -- worked
+    # An earlier attempt at this guard used 200 and wrongly blocked
+    # Wedding (167, a real success) -- length alone doesn't separate
+    # them as cleanly as this specific gap does; re-calibrate this
+    # threshold if a future cluster falls inside the 112-167 gap and
+    # turns out wrong either direction.
+    MIN_EVIDENCE_CHARS = 140
+    total_evidence_chars = sum(len(p.get("passage") or "") for p in passages_res)
+    if total_evidence_chars < MIN_EVIDENCE_CHARS:
+        raise RuntimeError(
+            f"Cluster {cluster_id!r} ({cluster_name!r}) has only "
+            f"{total_evidence_chars} characters of real evidence (minimum "
+            f"{MIN_EVIDENCE_CHARS}). Not enough to ground a page in -- the "
+            f"agent would improvise from general knowledge instead. Write "
+            f"real descriptive content into this cluster's vault note(s) "
+            f"before generating this page."
+        )
     evidence_passages = passages_res
 
     # ------------------------------------------------------------------

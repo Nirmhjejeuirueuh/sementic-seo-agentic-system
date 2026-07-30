@@ -308,14 +308,45 @@ def plan_links_node(state: AgentState) -> Dict[str, Any]:
 
 
 def persist_node(state: AgentState) -> Dict[str, Any]:
-    """Node 7: Write output file with JSON frontmatter and upsert :Page in Neo4j."""
+    """
+    Node 7: Write output file with JSON frontmatter and update the
+    Cluster's Page in Neo4j.
+
+    Fills in the Page Phase 6.2 already planned -- it does not create a
+    new one. The removed code did `MERGE (p:Page {slug: $slug})` where
+    slug came from the LLM's brief, which almost never matches the real
+    planned slug (site_structure.py derives it from the cluster name,
+    e.g. "corporate-gifts"; the LLM invents its own from the H1 it
+    wrote, e.g. "custom-trophies-awards"). Checked after generating 6
+    real pages: 4 of 6 created a second, disconnected Page node instead
+    of filling in the real one -- the site ended up with two different
+    "pages" for the same cluster, one of them not even the URL that
+    would go live.
+    """
     logger.info("[Agent] Step 7: Persisting output markdown file and updating Neo4j graph...")
 
+    db = DatabaseManager()
+
+    # The real page Phase 6.2 planned for this cluster. Every cluster
+    # gets one (src/analyze/site_structure.py), so this should always
+    # find something -- if it doesn't, that's a pipeline gap worth
+    # knowing about, not something to paper over with a guessed slug.
+    existing = db.execute_query(
+        "MATCH (p:Page)-[:COVERS]->(cl:Cluster {id: $cluster_id}) "
+        "RETURN p.url AS url, p.slug AS slug",
+        {"cluster_id": state["cluster_id"]},
+    )
+    if not existing:
+        db.close()
+        raise RuntimeError(
+            f"No Page covers cluster {state['cluster_id']!r}. "
+            f"Run src/analyze/site_structure.py before generating pages."
+        )
+    slug = existing[0]["slug"]
+
     brief = state.get("brief") or {}
-    slug = brief.get("slug", "generated-page")
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
-
     file_path = os.path.join(output_dir, f"{slug}.md")
 
     frontmatter = {
@@ -334,23 +365,12 @@ def persist_node(state: AgentState) -> Dict[str, Any]:
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(content_with_frontmatter)
 
-    # Upsert :Page node and LINKS_TO relationships in Neo4j
-    db = DatabaseManager()
     cypher_persist = """
-    MERGE (p:Page {slug: $slug})
-    ON CREATE SET 
-        p.url = '/' + $slug,
-        p.title = $title,
-        p.status = 'draft',
-        p.createdAt = timestamp()
-    ON MATCH SET 
-        p.title = $title,
-        p.status = 'draft',
+    MATCH (p:Page)-[:COVERS]->(cl:Cluster {id: $cluster_id})
+    SET p.title = $title,
+        p.draft_status = 'draft',
+        p.coverage_score = $coverage_score,
         p.updatedAt = timestamp()
-
-    WITH p
-    MATCH (cl:Cluster {id: $cluster_id})
-    MERGE (p)-[:COVERS]->(cl)
 
     WITH p
     UNWIND $links AS link
@@ -360,9 +380,9 @@ def persist_node(state: AgentState) -> Dict[str, Any]:
     """
 
     db.execute_query(cypher_persist, {
-        "slug": slug,
-        "title": brief.get("h1", slug),
         "cluster_id": state["cluster_id"],
+        "title": brief.get("h1", slug),
+        "coverage_score": state.get("critique", {}).get("coverage_score", 1.0),
         "links": state.get("links", [])
     })
     db.close()
