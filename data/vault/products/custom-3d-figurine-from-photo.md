@@ -9,6 +9,7 @@ occasions: []
 formats: []
 recipients: []
 keywords: [custom 3d figurine from photo]
+aliases: [figurine from photo]
 source_section: "1.1 row 6"
 ---
 

@@ -106,6 +106,19 @@ def build_cooccurrence(db: DatabaseManager) -> int:
     Pairs below MIN_COOCCURRENCE_WEIGHT are not written at all, so the
     clustering never sees them.
 
+    Generic (untagged) products are excluded from merging entirely --
+    see the module docstring's note on "Custom 3D Figurine from Photo".
+    A product with no style/type/occasion/format/recipient tag is, by
+    the vault's own authoring convention, a catch-all: its keywords
+    ("figurine from photo") legitimately co-occur with almost every
+    specific product's "photo"-based keywords, because that phrase cuts
+    across every category rather than belonging to one. Letting it merge
+    pulled fully generic keywords like "custom figurine from photo" into
+    the Memorial cluster the moment an alias made the join reach it.
+    Excluding it is not a workaround for that one product -- it is the
+    general rule that a horizontal, uncategorised concept cannot define
+    a vertical topic cluster.
+
     Undirected: written once per pair via the elementId ordering, then
     always matched without a direction.
     """
@@ -115,6 +128,8 @@ def build_cooccurrence(db: DatabaseManager) -> int:
         """
         MATCH (e1:__Entity__)<-[:ABOUT]-(k:Keyword)-[:ABOUT]->(e2:__Entity__)
         WHERE elementId(e1) < elementId(e2)
+          AND (e1.type <> 'Product' OR (e1)-[:HAS_STYLE|DEPICTS|FOR_OCCASION|HAS_FORMAT|GIFT_FOR|PAIRS_WITH]->())
+          AND (e2.type <> 'Product' OR (e2)-[:HAS_STYLE|DEPICTS|FOR_OCCASION|HAS_FORMAT|GIFT_FOR|PAIRS_WITH]->())
         WITH e1, e2, count(k) AS shared
         WHERE shared >= $min_weight
         MERGE (e1)-[r:CO_OCCURS_WITH]-(e2)
@@ -125,7 +140,7 @@ def build_cooccurrence(db: DatabaseManager) -> int:
     )
     edges = result[0]["edges"] if result else 0
     logger.info(
-        "Co-occurrence: %d entity pairs share >= %d keywords.",
+        "Co-occurrence: %d entity pairs share >= %d keywords (untagged products excluded).",
         edges, MIN_COOCCURRENCE_WEIGHT,
     )
     return edges
