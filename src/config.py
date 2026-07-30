@@ -80,20 +80,62 @@ if EMBEDDING_MODEL == _default_model and EMBEDDING_DIM != _default_dim:
 # it gets the capable model. Bulk classification gets the cheap fast one.
 EXTRACTION_MODEL = os.getenv("EXTRACTION_MODEL", "claude-sonnet-5")
 CLASSIFICATION_MODEL = os.getenv("CLASSIFICATION_MODEL", "claude-haiku-4-5-20251001")
-AGENT_MODEL = os.getenv("AGENT_MODEL", "claude-sonnet-5")
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+
+# ---------------------------------------------------------------------
+# THE PAGE-WRITING AGENT'S PROVIDER (Phase 7)
+# ---------------------------------------------------------------------
+# Explicit, not guessed. The old code picked a provider by checking which
+# API key happened to be non-empty, in a fixed order (Anthropic, then
+# OpenAI, then Gemini) -- and its Gemini branch fell back to the literal
+# string "dummy" as an API key if GEMINI_API_KEY was unset, so a missing
+# key produced a confusing API error instead of a clear one. Same failure
+# family as the fake-embeddings bug removed in Phase 0 (CLAUDE.md rule 9):
+# a missing input should raise here, not get silently substituted.
+#
+# AGENT_PROVIDER says which provider to use. require_agent_key() then
+# fails immediately and clearly if that provider's key is missing.
+AGENT_PROVIDER = os.getenv("AGENT_PROVIDER", "anthropic").strip().lower()
+
+_AGENT_MODEL_DEFAULTS = {
+    "anthropic": "claude-sonnet-5",
+    "openai": "gpt-4o-mini",
+    "gemini": "gemini-2.5-flash",
+}
+_AGENT_KEYS = {
+    "anthropic": ANTHROPIC_API_KEY,
+    "openai": OPENAI_API_KEY,
+    "gemini": GEMINI_API_KEY,
+}
+
+if AGENT_PROVIDER not in _AGENT_MODEL_DEFAULTS:
+    raise ValueError(
+        f"AGENT_PROVIDER must be one of {list(_AGENT_MODEL_DEFAULTS)}, "
+        f"got {AGENT_PROVIDER!r}. Check your .env file."
+    )
+
+# `or` here, not the two-arg os.getenv() form: .env can set AGENT_MODEL=
+# (present but blank) rather than omitting the line entirely, and
+# os.getenv()'s default only kicks in when the variable is ABSENT, not
+# when it's an empty string. Without this, a blank line in .env would
+# silently produce AGENT_MODEL = "" instead of the intended default.
+AGENT_MODEL = os.getenv("AGENT_MODEL", "").strip() or _AGENT_MODEL_DEFAULTS[AGENT_PROVIDER]
 
 
-def require_anthropic_key() -> str:
-    """Call this at the top of any module that needs an LLM."""
-    if not ANTHROPIC_API_KEY:
+def require_agent_key() -> str:
+    """Call this before instantiating the page-writing agent's LLM."""
+    key = _AGENT_KEYS[AGENT_PROVIDER]
+    if not key:
+        env_var = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY",
+                    "gemini": "GEMINI_API_KEY"}[AGENT_PROVIDER]
         raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and "
-            "add your key from https://console.anthropic.com/settings/keys"
+            f"AGENT_PROVIDER={AGENT_PROVIDER!r} but {env_var} is not set in .env. "
+            f"Add it, or change AGENT_PROVIDER to a provider whose key you do have."
         )
-    return ANTHROPIC_API_KEY
+    return key
 
 
 # ---------------------------------------------------------------------

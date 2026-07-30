@@ -21,8 +21,12 @@ neo4j>=5.26,<6
 langgraph>=1.2,<1.3
 
 # --- LangChain (LLM clients used by LangGraph nodes) -----------------
+# The page-writing agent (Phase 7) needs ONE of these, matching whichever
+# API key is set in .env. This project uses Gemini -- see AGENT_PROVIDER
+# in .env / src/config.py.
 langchain-core>=0.3.30
 langchain-anthropic>=0.3.0
+langchain-google-genai>=4.3.0
 
 # --- Embeddings ------------------------------------------------------
 # fastembed runs BAAI/bge-small-en-v1.5 locally via ONNX. No API key,

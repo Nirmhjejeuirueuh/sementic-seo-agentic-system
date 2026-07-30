@@ -12,26 +12,35 @@ from langgraph.checkpoint.memory import InMemorySaver
 # from langgraph.checkpoint.sqlite import SqliteSaver
 # checkpointer = SqliteSaver.from_conn_string("checkpoints.db")
 
-from src.config import ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, AGENT_MODEL
+from src.config import AGENT_PROVIDER, AGENT_MODEL, require_agent_key
 from src.db import DatabaseManager
 from src.agents.context import fetch_agent_context
 from src.agents.state import AgentState, PageBrief, PageCritique, PageLinkPlan
+from src.analyze.site_structure import pick_head_term
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
 def get_llm():
-    """Instantiate appropriate LLM instance based on available credentials."""
-    if ANTHROPIC_API_KEY:
+    """
+    Instantiate the LLM for AGENT_PROVIDER (set in .env).
+
+    require_agent_key() raises immediately if that provider's key is
+    missing, rather than silently trying a fake key -- see
+    src/config.py for why that matters.
+    """
+    api_key = require_agent_key()
+
+    if AGENT_PROVIDER == "anthropic":
         from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(model=AGENT_MODEL, anthropic_api_key=ANTHROPIC_API_KEY, temperature=0.1)
-    elif OPENAI_API_KEY:
+        return ChatAnthropic(model=AGENT_MODEL, anthropic_api_key=api_key, temperature=0.1)
+    elif AGENT_PROVIDER == "openai":
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model="gpt-4o-mini", api_key=OPENAI_API_KEY, temperature=0.1)
-    else:
+        return ChatOpenAI(model=AGENT_MODEL, api_key=api_key, temperature=0.1)
+    else:  # "gemini" -- config.py already validated AGENT_PROVIDER is one of the three
         from langchain_google_genai import ChatGoogleGenerativeAI
-        return ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=GEMINI_API_KEY or "dummy", temperature=0.1)
+        return ChatGoogleGenerativeAI(model=AGENT_MODEL, google_api_key=api_key, temperature=0.1)
 
 
 # -------------------------------------------------------------------
@@ -62,42 +71,49 @@ def write_brief_node(state: AgentState) -> Dict[str, Any]:
     logger.info("[Agent] Step 2: Generating structured content brief...")
     
     entities = state["entities"]
-    must_cover = entities[:min(len(entities), 8)] if entities else ["Semantic SEO", "Knowledge Graph"]
+    must_cover = entities[:min(len(entities), 8)]
+    # keywords_list is never empty here -- fetch_agent_context() raises
+    # rather than returning an empty keyword list (src/agents/context.py).
     keywords_list = [k["name"] for k in state["keywords"]]
-    primary_kw = keywords_list[0] if keywords_list else "semantic seo"
-    secondary_kws = keywords_list[1:5] if len(keywords_list) > 1 else ["topic clusters", "search intent"]
 
-    try:
-        llm = get_llm()
-        structured_llm = llm.with_structured_output(PageBrief)
-        prompt = f"""
-        Create a detailed SEO Page Brief for a web page in topic cluster '{state['cluster_name']}'.
-        Target Dominant Intent: {state['dominant_intent']}
-        Primary Keyword: {primary_kw}
-        Secondary Keywords: {secondary_kws}
-        Cluster Entities Available: {entities}
+    # The head term by containment (src/analyze/site_structure.py,
+    # already proven in Phase 6.2), not keywords_list[0]. Bare list
+    # order is whatever context.py's Cypher ORDER BY produced --
+    # alphabetical, since there's no real popularity signal to sort by
+    # (Phase 5 has no search-volume data). For this cluster that meant
+    # "angel memorial figurine" became the primary keyword simply
+    # because "angel" sorts first, not because it's what the cluster is
+    # actually about. pick_head_term finds "memorial figurine" instead,
+    # the phrase 15 of this cluster's 49 keywords actually contain.
+    primary_kw = pick_head_term([k["normalized"] for k in state["keywords"]])
+    secondary_kws = [k for k in keywords_list if k.lower() != primary_kw][:4]
 
-        Requirement: Choose 5-10 entity names verbatim from the entity list for 'must_cover'.
-        """
-        brief_obj = structured_llm.invoke(prompt)
-        brief = brief_obj.model_dump() if brief_obj else None
-    except Exception as e:
-        logger.warning(f"LLM write_brief warning: {e}. Utilizing fallback structured brief.")
-        brief = {
-            "h1": f"Complete Guide to {primary_kw.title()}",
-            "slug": primary_kw.replace(" ", "-"),
-            "meta_description": f"Learn how {primary_kw} transforms semantic SEO and knowledge graphs. Comprehensive guide covering key concepts.",
-            "primary_keyword": primary_kw,
-            "secondary_keywords": secondary_kws,
-            "intent": state["dominant_intent"],
-            "h2_sections": [
-                f"Understanding {primary_kw.title()}",
-                "Core Concepts & Architecture",
-                "Implementation Best Practices",
-                "Measuring Semantic SEO Performance"
-            ],
-            "must_cover": must_cover
-        }
+    # No fallback brief on failure. The removed code wrote a generic
+    # "Complete Guide to X" / "Core Concepts & Architecture" brief on any
+    # LLM error -- boilerplate lifted from an unrelated demo project, not
+    # grounded in this cluster at all. A failed brief must stop the
+    # pipeline here, visibly, not produce a page built on invented
+    # structure (CLAUDE.md rule 9; same fix already applied to
+    # fetch_agent_context, plan_links_node).
+    llm = get_llm()
+    structured_llm = llm.with_structured_output(PageBrief)
+    prompt = f"""
+    Create a detailed SEO Page Brief for a web page in topic cluster '{state['cluster_name']}'.
+    Target Dominant Intent: {state['dominant_intent']}
+    Primary Keyword: {primary_kw}
+    Secondary Keywords: {secondary_kws}
+    Cluster Entities Available: {entities}
+
+    Requirement: Choose 5-10 entity names verbatim from the entity list for 'must_cover'.
+    """
+    brief_obj = structured_llm.invoke(prompt)
+    if brief_obj is None:
+        raise RuntimeError(
+            f"write_brief_node: structured_llm.invoke() returned None for "
+            f"cluster {state['cluster_id']!r}. The LLM call succeeded but "
+            f"produced no parseable PageBrief."
+        )
+    brief = brief_obj.model_dump()
 
     return {"brief": brief}
 
@@ -110,42 +126,46 @@ def draft_node(state: AgentState) -> Dict[str, Any]:
     logger.info("[Agent] Step 3: Writing content draft grounded strictly in source passages...")
 
     brief = state["brief"] or {}
-    passages_text = "\n\n".join([f"Source [{p.get('doc', 'Doc')}]: {p.get('passage', '')}" for p in state["evidence_passages"]])
+
+    # Numbered evidence blocks, not "Source [vault_FigurineType]: ...".
+    # The old format echoed straight into the visible draft as literal
+    # bracketed tags -- vault_FigurineType is a Neo4j Document.id
+    # (src/ingest/vault.py: f"vault_{note_type}"), internal bookkeeping,
+    # never meant to be customer-facing text. Numbering plus an explicit
+    # instruction not to cite is the fix, not just relabeling the source.
+    passages_text = "\n\n".join(
+        f"Evidence {i}:\n{p.get('passage', '')}"
+        for i, p in enumerate(state["evidence_passages"], start=1)
+    )
 
     prompt = f"""
     You are an expert technical writer and SEO strategist.
     Write a complete Markdown document based on the brief below.
 
     BRIEF:
-    H1: {brief.get('h1', 'Semantic SEO Guide')}
+    H1: {brief.get('h1')}
     Primary Keyword: {brief.get('primary_keyword')}
     Intent: {brief.get('intent')}
     Must Cover Entities (Explain these thoroughly): {brief.get('must_cover')}
     Sections: {brief.get('h2_sections')}
 
-    EVIDENCE PASSAGES (STRICT SOURCE GROUNDING):
+    EVIDENCE (STRICT SOURCE GROUNDING):
     {passages_text}
 
     SYSTEM INSTRUCTIONS:
-    - Ground every factual claim in the supplied evidence passages.
-    - If the source passages do not support a claim, omit it or state what is verified by the source.
+    - Ground every factual claim in the evidence above.
+    - If the evidence does not support a claim, omit it or state what is verified by the source.
     - Never fill knowledge gaps from unverified external assumptions.
     - An entity counts as covered only if explained thoroughly, not if merely listed in a bullet.
+    - Write natural prose. Do NOT include source labels, citation markers,
+      document IDs, or brackets like "[Evidence 1]" anywhere in the output --
+      the evidence is background for you, not text to quote its label.
     """
 
-    try:
-        llm = get_llm()
-        res = llm.invoke(prompt)
-        draft_content = res.content if hasattr(res, 'content') else str(res)
-    except Exception as e:
-        logger.warning(f"LLM draft generation warning: {e}. Using fallback grounded draft generator.")
-        draft_content = f"# {brief.get('h1')}\n\n"
-        draft_content += f"## Understanding {brief.get('primary_keyword', 'Semantic SEO').title()}\n\n"
-        draft_content += f"{state['evidence_passages'][0]['passage'] if state['evidence_passages'] else 'Semantic SEO optimizes content around interconnected entity graphs.'}\n\n"
-        draft_content += f"### Essential Concepts Covered\n\n"
-        for ent in brief.get('must_cover', []):
-            draft_content += f"- **{ent}**: Critical component in building semantic authority and knowledge graph relationships.\n"
-        draft_content += "\n## Implementation & Architecture\n\nBy organizing content into structured topic clusters, search engines can map user search intent directly to authoritative entity nodes."
+    # No fallback draft on failure -- see write_brief_node for why.
+    llm = get_llm()
+    res = llm.invoke(prompt)
+    draft_content = res.content if hasattr(res, 'content') else str(res)
 
     return {"draft": draft_content}
 
@@ -158,46 +178,36 @@ def critique_node(state: AgentState) -> Dict[str, Any]:
     must_cover = brief.get("must_cover", [])
     draft = state["draft"]
 
-    try:
-        llm = get_llm()
-        structured_llm = llm.with_structured_output(PageCritique)
-        prompt = f"""
-        Evaluate this article draft against the required entity list and intent.
+    # No fallback critique on failure. The removed code's "programmatic
+    # critique" looked like a reasonable degraded mode -- it computed a
+    # real coverage_score from the actual draft -- but it silently
+    # replaced LLM judgment ("does the draft explain this entity
+    # meaningfully?") with a plain substring check (does the entity's
+    # name appear anywhere?), and nothing in the returned critique
+    # distinguished which path produced it. should_revise() would trust
+    # either score identically. A quality gate that can silently become
+    # much easier to pass is worse than one that fails loudly.
+    llm = get_llm()
+    structured_llm = llm.with_structured_output(PageCritique)
+    prompt = f"""
+    Evaluate this article draft against the required entity list and intent.
 
-        Must Cover Entities: {must_cover}
-        Required Intent: {brief.get('intent')}
+    Must Cover Entities: {must_cover}
+    Required Intent: {brief.get('intent')}
 
-        Draft Content:
-        {draft[:4000]}
+    Draft Content:
+    {draft[:4000]}
 
-        Rules:
-        An entity counts as covered ONLY if the draft explains or uses it meaningfully in context, not if it merely appears in a bullet list.
-        """
-        critique_obj = structured_llm.invoke(prompt)
-        critique = critique_obj.model_dump() if critique_obj else None
-    except Exception as e:
-        logger.warning(f"LLM critique warning: {e}. Executing programmatic critique evaluator.")
-        
-        # Programmatic fallback critique
-        covered = []
-        missing = []
-        for ent in must_cover:
-            if ent.lower() in draft.lower():
-                covered.append(ent)
-            else:
-                missing.append(ent)
-
-        total = len(must_cover) or 1
-        score = len(covered) / total
-
-        critique = {
-            "covered": covered,
-            "missing": missing,
-            "intent_match": True,
-            "cannibalisation_risk": "none",
-            "specific_revision_notes": f"Ensure thorough explanation for missing entities: {missing}" if missing else "Draft coverage meets criteria.",
-            "coverage_score": score
-        }
+    Rules:
+    An entity counts as covered ONLY if the draft explains or uses it meaningfully in context, not if it merely appears in a bullet list.
+    """
+    critique_obj = structured_llm.invoke(prompt)
+    if critique_obj is None:
+        raise RuntimeError(
+            f"critique_node: structured_llm.invoke() returned None for "
+            f"cluster {state['cluster_id']!r}."
+        )
+    critique = critique_obj.model_dump()
 
     return {"critique": critique}
 
@@ -241,15 +251,15 @@ def revise_node(state: AgentState) -> Dict[str, Any]:
     {current_draft}
     """
 
-    try:
-        llm = get_llm()
-        res = llm.invoke(prompt)
-        revised_draft = res.content if hasattr(res, 'content') else str(res)
-    except Exception as e:
-        logger.warning(f"Revision LLM note: {e}")
-        revised_draft = current_draft + "\n\n## Additional Entity Insights\n\n"
-        for m in missing:
-            revised_draft += f"### {m}\n{m} plays a critical role in semantic topic cluster structure and internal entity resolution.\n\n"
+    # No fallback revision on failure. The removed code appended
+    # "{entity} plays a critical role in semantic topic cluster structure
+    # and internal entity resolution" for every missing entity -- content
+    # true of nothing in particular, appended to a REAL draft that would
+    # otherwise have shipped as-is. That's worse than the unrevised draft:
+    # it looks like the missing coverage was addressed when it wasn't.
+    llm = get_llm()
+    res = llm.invoke(prompt)
+    revised_draft = res.content if hasattr(res, 'content') else str(res)
 
     return {
         "draft": revised_draft,
@@ -258,7 +268,21 @@ def revise_node(state: AgentState) -> Dict[str, Any]:
 
 
 def plan_links_node(state: AgentState) -> Dict[str, Any]:
-    """Node 6: Propose internal links whose anchor text appears verbatim in the draft."""
+    """
+    Node 6: Propose internal links whose anchor text appears verbatim in
+    the draft.
+
+    No invented fallback link when nothing matches. The removed code
+    appended a link with anchor_text="topic clusters" pointing at
+    whichever sibling happened to be first, whenever no real sibling
+    name appeared in the draft -- which directly contradicted this
+    function's own stated contract ("verbatim anchor text"), and put a
+    link into the persisted page whose anchor text doesn't exist in the
+    page. Zero proposed links is the correct, honest answer when nothing
+    matches (CLAUDE.md rule 9) -- real relevance-based suggestions
+    (matching by shared entity/topic instead of literal text) are
+    Phase 8's job, not a place-holder here.
+    """
     logger.info("[Agent] Step 6: Planning internal links with verbatim anchor text matching...")
 
     siblings = state.get("sibling_pages", [])
@@ -271,15 +295,14 @@ def plan_links_node(state: AgentState) -> Dict[str, Any]:
             proposed_links.append({
                 "target_slug": sib,
                 "anchor_text": phrase,
-                "relationship_reason": f"Semantic cross-link for cluster topic '{phrase}'"
+                "relationship_reason": f"Verbatim mention of sibling topic '{phrase}' in the draft"
             })
 
-    if not proposed_links and siblings:
-        proposed_links.append({
-            "target_slug": siblings[0],
-            "anchor_text": "topic clusters",
-            "relationship_reason": "Default cluster context cross-link"
-        })
+    if not proposed_links:
+        logger.info(
+            "[Agent] 0 internal links proposed -- no sibling page name appears "
+            "verbatim in the draft. Expected; not an error."
+        )
 
     return {"links": proposed_links}
 
