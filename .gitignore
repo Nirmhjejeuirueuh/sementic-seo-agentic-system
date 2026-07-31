@@ -9,8 +9,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# Generated output
-output/
+# Generated output -- the 32 generated pages (output/*.md) are tracked;
+# only the per-run debug logs are excluded.
+output/batch_logs/
 *.log
 
 # Obsidian workspace state (keep the notes, ignore the UI state)
