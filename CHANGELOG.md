@@ -7,6 +7,60 @@ Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## [Project complete — final pass] — 2026-07-31
+
+Closes the last two open items in the repo. No new pipeline code; this
+is reconciliation and one real data fix.
+
+### Fixed: the 2 truncated product URLs (open since Phase 3)
+`products/dust-proof-acrylic-display-box.md` and
+`products/gift-box-packaging.md` had a blank `url` because the source
+document's own table truncates both slugs with an ellipsis. Phase 3
+deliberately left them blank rather than guessing the ending.
+
+Resolved by reading the live site's own product sitemap
+(`getfiguro.com/sitemap.xml` → `sitemap_products_1.xml?from=…&to=…`).
+Both full slugs were found, and each one's prefix matches the source
+document's truncated version character-for-character — so these are
+verified against the live site, not reconstructed. Vault re-ingested:
+`Page` 75 → 77, every other count unchanged (147 keywords, 83 entities,
+32 clusters), and Phase 8's 5 `LINKS_TO` / 8 `SHOULD_LINK_TO` edges
+confirmed intact afterwards.
+
+Incidental finding, recorded because it matters for whatever publishes
+these pages: that sitemap structure confirms **getfiguro.com runs on
+Shopify**. Shopify regenerates `sitemap.xml` itself once a page is
+published, so no sitemap needs to be hand-written by this project.
+
+### Fixed: `progress-tracker.md`'s Phase 1 checklist was stale
+It still listed 5 open repair items, 4 of which had actually been fixed
+during Phases 5–8 — each phase had to touch the broken module anyway,
+so repairing it in place was cheaper than repairing it twice. Verified
+against the current code before checking them off:
+
+```
+link_keywords.py  CONTAINS appears only in the docstring describing
+                  the old bug; matching is whole-word \b   (Phase 5)
+keywords.py       one bulk embed_texts() call, line 199    (Phase 5)
+clusters.py       real GDS Louvain; real gds.pageRank now
+                  lives in analyze/linking.py            (Phase 6, 8)
+context.py        no fallbacks; plus the evidence guard     (Phase 7)
+```
+
+`src/ingest/documents.py` remains the one unbuilt module. That is a
+deliberate deferral, not an oversight — it is reserved for the source
+document's §7–8 prose SEO rulebook, `CLAUDE.md` says not to rewrite it
+yet, and nothing in Phases 2–8 depends on it.
+
+### Rewrote "what to do manually right now"
+The old list's items were done or obsolete. Replaced with an honest
+split of what actually remains: human judgment calls (read the 32
+pages, merge to `main`, brief the mentor), publishing to Shopify (a
+separate project this repo has no code for), and the optional lever for
+denser internal linking (add real vault tags — data, not code).
+
+---
+
 ## [Phase 8 — Internal linking + structured data] — 2026-07-31
 
 Branch: `feature/keyword-graph-and-agent`. The mentor's **task 4**, and

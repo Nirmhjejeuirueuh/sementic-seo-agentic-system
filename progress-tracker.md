@@ -1,6 +1,6 @@
 # Progress Tracker
 
-Last updated: **2026-07-30**
+Last updated: **2026-07-31** — **all 8 phases complete.**
 
 A plain-language view of what is done, what is next, and what is blocking.
 For the technical detail behind each change, see `CHANGELOG.md`.
@@ -18,7 +18,7 @@ figurine domain.
 | Phase | What it delivers | State |
 |---|---|---|
 | 0 | Infrastructure that runs and is verified | ✅ **Done** |
-| 1 | Repair the pipeline modules the handover faked | 🔧 In progress |
+| 1 | Repair the pipeline modules the handover faked | ✅ **Done** (1 module deliberately deferred) |
 | 2 | A domain schema that fits Getfiguro | ✅ **Done** |
 | 3 | The knowledge base, authored in Obsidian | ✅ **Done — full 37-product catalogue** |
 | 4 | Ingest the vault into the graph | ✅ **Done &amp; verified** |
@@ -45,24 +45,42 @@ verify_vector_index   -> pricing query -> pricing passage   PASS
 
 ---
 
-## 🔧 Phase 1 — Repair the pipeline (IN PROGRESS)
+## ✅ Phase 1 — Repair the pipeline (DONE, except one deliberate deferral)
 
 Unchanged by the domain pivot — these are generic pipeline defects from
 the handover, independent of storybooks vs. figurines.
 
+Most of these were not fixed as a standalone "Phase 1" pass. They were
+fixed as a *consequence* of Phases 5–8, because each phase had to touch
+the broken module anyway, and repairing it in place was cheaper than
+repairing it twice. This checklist was left stale for several phases;
+it is now reconciled against the actual code.
+
 - [x] Removed fake hash-based embeddings from `src/db.py`
 - [x] Removed silent schema-error swallowing
-- [ ] `src/ingest/documents.py` — use `neo4j-graphrag` instead of the
-      hand-rolled extractor; stop writing inside a Python loop; delete the
-      regex fallback. **Scope note:** this module is now reserved for the
-      source document's §7-8 prose SEO rulebook only — the catalogue
-      itself loads deterministically via `src/ingest/vault.py` instead
-      (see Phase 3/4 below).
-- [ ] `src/enrich/link_keywords.py` — fix the duplicate-edge `MERGE`;
-      replace `CONTAINS` matching with something precise
-- [ ] `src/analyze/clusters.py` — use real GDS PageRank, not a formula
-- [ ] `src/agents/context.py` — remove hardcoded sample fallbacks
-- [ ] `src/ingest/keywords.py` — batch the embeddings
+- [x] `src/enrich/link_keywords.py` — duplicate-edge `MERGE` and
+      `CONTAINS` false positives both gone. **Rewritten in Phase 5**;
+      matching is now whole-word (`\b`) and `ABOUT` is recomputed from
+      scratch each run so a rule change can't leave a stale edge.
+- [x] `src/analyze/clusters.py` — the invented `pageRank` formula is
+      gone. **Phase 6** replaced clustering with real GDS Louvain;
+      **Phase 8** added the real `gds.pageRank` in
+      `src/analyze/linking.py`, which is where it always belonged
+      (clusters.py's own docstring said so).
+- [x] `src/agents/context.py` — hardcoded sample fallbacks removed.
+      **Rewritten in Phase 7**, plus a new minimum-evidence guard that
+      catches the subtler version of the same failure.
+- [x] `src/ingest/keywords.py` — embeddings batched into one
+      `embed_texts()` call. **Rewritten in Phase 5** (the old module
+      couldn't even be imported).
+- [ ] `src/ingest/documents.py` — **deliberately deferred, not
+      forgotten.** It would use `neo4j-graphrag` instead of the
+      hand-rolled extractor, stop writing inside a Python loop, and drop
+      the regex fallback. It is reserved for the source document's §7–8
+      prose SEO rulebook, which nothing in Phases 2–8 needs: the
+      catalogue loads deterministically via `src/ingest/vault.py`
+      instead. `CLAUDE.md` explicitly says not to rewrite it yet.
+      **Nothing built so far depends on it.**
 
 ---
 
@@ -108,10 +126,14 @@ reference/audit trail).
 - [ ] `accessories/` taxonomy folder intentionally still empty — no
       product in the source document states a figurine pairing with an
       accessory, so nothing to tag yet (see PRODUCTS_TODO.md note ③)
-- [ ] 2 products (`dust-proof-acrylic-display-box.md`,
-      `gift-box-packaging.md`) have a blank `url` — the source document's
-      own table truncates these slugs. **Action for you:** confirm the
-      real URLs against the live site and fill them in.
+- [x] 2 products (`dust-proof-acrylic-display-box.md`,
+      `gift-box-packaging.md`) had a blank `url` — the source document's
+      own table truncates these slugs. **Resolved 2026-07-31:** both full
+      slugs read from the live site's own product sitemap
+      (`getfiguro.com/sitemap.xml` → `sitemap_products_1.xml`), and each
+      prefix matches the source document's truncated version
+      character-for-character. Verified, not guessed. Vault re-ingested:
+      Page count 75 → 77.
 
 ---
 
@@ -270,20 +292,61 @@ His **task 4**. Two real gaps closed, both previously flagged as "Phase
 
 ---
 
-## What to do manually right now
+## The pipeline is complete. What remains is not code.
 
-1. **Review Phases 6-8** on the `feature/keyword-graph-and-agent`
-   branch, and read a few of the 32 generated pages in `output/*.md` —
-   nothing is merged to `main` or pushed yet.
-2. **Confirm 2 truncated URLs** against the live Getfiguro site and fill
-   them into `products/dust-proof-acrylic-display-box.md` and
-   `products/gift-box-packaging.md` (still blank, low priority).
-3. **Tell the mentor about one simplification**: his diagram shows five
-   AI agents; the plan implements one real LLM agent (page generation,
-   his task 3) plus deterministic code for the rest. Keyword parsing,
-   intent classification, and entity expansion are a CSV read, a rule
-   table, and a Cypher query — making them LLM calls costs money, adds
-   failure modes, and makes them untestable, for no gain.
+Every phase of the brief is built, verified, and synced to both
+databases. There is **no known pipeline work outstanding** — the one
+unbuilt module (`src/ingest/documents.py`) is deliberately deferred and
+nothing depends on it.
+
+What is left needs a human, and splits into three kinds:
+
+### 1. Judgment calls only you and the mentor can make
+
+- **Read the 32 pages.** `coverage_score` measures entity coverage, not
+  brand voice, tone, or factual accuracy. Nobody has read all 32
+  end-to-end yet. Worth a specific check: the source document's
+  trademark cautions (`data/vault/styles/pop-vinyl.md`,
+  `types/celebrity-fan-art.md`). Verified mechanically already — the
+  string "Funko" appears nowhere in `output/`, only inside the vault
+  note that warns against it — but tone and phrasing still need eyes.
+- **Merge to `main`.** Everything lives on
+  `feature/keyword-graph-and-agent`, pushed to GitHub, never merged.
+  That is a deliberate stopping point, not an oversight.
+- **Tell the mentor about one simplification**: his diagram shows five
+  AI agents; this implements one real LLM agent (page generation, his
+  task 3) plus deterministic code for the rest. Keyword parsing, intent
+  classification, and entity expansion are a CSV read, a rule table,
+  and a Cypher query — making them LLM calls costs money, adds failure
+  modes, and makes them untestable, for no gain.
+
+### 2. Publishing — a genuinely separate project
+
+Nothing in this repo touches getfiguro.com. `output/*.md` are drafts;
+the `url` on each page is a *proposal* matching the live site's URL
+patterns, not a URL that already exists.
+
+The live site is **Shopify** (confirmed: `getfiguro.com/sitemap.xml`
+returns Shopify's `sitemap_products_1.xml?from=…&to=…` structure).
+That means each page has to be created in Shopify as a Collection,
+Product, or Blog article, and the `json_ld` block injected into the
+theme template. Shopify then regenerates `sitemap.xml` on its own —
+a sitemap is a crawl hint, not a publishing step, and hand-writing one
+would do nothing.
+
+Automating that (Shopify Admin API → create pages from `output/*.md`)
+is real work this repo has no code for. Scope it separately.
+
+### 3. Optional: denser internal linking
+
+5 real links across 32 pages is honest, not broken — most topics in
+this catalogue genuinely don't connect (Phase 6 measured the same
+sparsity: 11 co-occurring pairs out of 82 entities). If you want more,
+the lever is **data, not code**: add real `styles:` / `occasions:` /
+`aliases:` tags to more vault notes, then re-run
+`python -m src.analyze.linking`. Every genuine new tag creates a new
+candidate connection. Same lever that took keyword coverage 55% → 76%
+in Phase 5.
 
 ```powershell
 .\run.ps1 browser
@@ -294,6 +357,3 @@ See the internal-link graph in Neo4j Browser:
 MATCH (p1:Page)-[r:SHOULD_LINK_TO]->(p2:Page)
 RETURN p1, r, p2
 ```
-
-All 8 phases from the brief are now done on this branch. The remaining
-work is human review, not new pipeline code — see item 1 above.
