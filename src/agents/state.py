@@ -42,7 +42,6 @@ class AgentState(TypedDict):
     keywords: List[Dict[str, Any]]
     dominant_intent: str
     evidence_passages: List[Dict[str, Any]]
-    sibling_pages: List[str]
     brief: Optional[Dict[str, Any]]
     draft: str
     critique: Optional[Dict[str, Any]]

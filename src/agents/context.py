@@ -25,11 +25,13 @@ What legitimately CAN be empty vs what CANNOT, and why:
       means the cluster_id is wrong or the graph is in an inconsistent
       state -- a real bug, not a quiet edge case. Raise.
 
-  sibling_pages
-      Legitimately can be empty or short. Real relevance-based linking
-      (SHOULD_LINK_TO, from shared entities/PageRank) is Phase 8's job,
-      not built yet. An empty list here just means "no link candidates
-      yet" -- log it, don't raise.
+Sibling pages used to be fetched here for plan_links_node -- a
+priority-sorted list of unrelated pages that essentially never appeared
+in draft prose, which is why 0 links ever got proposed. Phase 8
+(src/analyze/linking.py) replaced that with real SHOULD_LINK_TO edges,
+which plan_links_node now queries directly for the cluster it's
+persisting -- there was never anywhere else in the pipeline that used
+this field, so it's removed rather than left half-wired.
 
 Run standalone for a smoke test: python -m src.agents.context <cluster_id>
 """
@@ -53,7 +55,6 @@ def fetch_agent_context(cluster_id: str, db: DatabaseManager) -> Dict[str, Any]:
         dominant_intent           -- majority vote over those keywords
         evidence_passages         -- source text, ranked by how many
                                       cluster entities each passage covers
-        sibling_pages             -- other real pages (may be empty)
     """
     logger.info("Loading Neo4j context for cluster: %s", cluster_id)
 
@@ -187,31 +188,6 @@ def fetch_agent_context(cluster_id: str, db: DatabaseManager) -> Dict[str, Any]:
         )
     evidence_passages = passages_res
 
-    # ------------------------------------------------------------------
-    # Sibling pages -- legitimately optional. Real relevance ranking
-    # (shared entities, PageRank) is Phase 8. For now this surfaces
-    # other real proposed/existing pages so the agent has *something* to
-    # consider linking to, ranked by how much keyword demand they carry.
-    # ------------------------------------------------------------------
-    siblings_res = db.execute_query(
-        """
-        MATCH (p:Page)-[:COVERS]->(other:Cluster)
-        WHERE other.id <> $cluster_id
-        RETURN DISTINCT p.url AS url, p.slug AS slug, p.status AS status,
-               p.priority AS priority
-        ORDER BY p.priority DESC
-        LIMIT 5
-        """,
-        {"cluster_id": cluster_id},
-    )
-    if not siblings_res:
-        logger.info(
-            "No sibling pages found for cluster %s -- expected until more "
-            "clusters have pages, or once Phase 8 builds real relevance links.",
-            cluster_id,
-        )
-    sibling_pages = [s["slug"] for s in siblings_res if s.get("slug")]
-
     return {
         "cluster_id": cluster_id,
         "cluster_name": cluster_name,
@@ -219,7 +195,6 @@ def fetch_agent_context(cluster_id: str, db: DatabaseManager) -> Dict[str, Any]:
         "keywords": keywords,
         "dominant_intent": dominant_intent,
         "evidence_passages": evidence_passages,
-        "sibling_pages": sibling_pages,
     }
 
 
@@ -246,6 +221,5 @@ if __name__ == "__main__":
         print(f"entities ({len(ctx['entities'])}): {ctx['entities']}")
         print(f"keywords: {len(ctx['keywords'])}")
         print(f"evidence passages: {len(ctx['evidence_passages'])}")
-        print(f"sibling pages: {ctx['sibling_pages']}")
     finally:
         db.close()

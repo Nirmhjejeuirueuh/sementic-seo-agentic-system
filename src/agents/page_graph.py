@@ -17,6 +17,8 @@ from src.db import DatabaseManager
 from src.agents.context import fetch_agent_context
 from src.agents.state import AgentState, PageBrief, PageCritique, PageLinkPlan
 from src.analyze.site_structure import pick_head_term
+from src.analyze.linking import propose_anchor_links
+from src.analyze.structured_data import build_json_ld, extract_price
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -60,7 +62,6 @@ def load_context_node(state: AgentState) -> Dict[str, Any]:
         "keywords": context["keywords"],
         "dominant_intent": context["dominant_intent"],
         "evidence_passages": context["evidence_passages"],
-        "sibling_pages": context["sibling_pages"],
         "revision_counter": 0,
         "revision_budget": state.get("revision_budget", 2)
     }
@@ -269,40 +270,31 @@ def revise_node(state: AgentState) -> Dict[str, Any]:
 
 def plan_links_node(state: AgentState) -> Dict[str, Any]:
     """
-    Node 6: Propose internal links whose anchor text appears verbatim in
-    the draft.
+    Node 6: Propose internal links from real cross-cluster relevance
+    (SHOULD_LINK_TO), gated on the target's anchor phrase appearing
+    verbatim in the draft.
 
-    No invented fallback link when nothing matches. The removed code
-    appended a link with anchor_text="topic clusters" pointing at
-    whichever sibling happened to be first, whenever no real sibling
-    name appeared in the draft -- which directly contradicted this
-    function's own stated contract ("verbatim anchor text"), and put a
-    link into the persisted page whose anchor text doesn't exist in the
-    page. Zero proposed links is the correct, honest answer when nothing
-    matches (CLAUDE.md rule 9) -- real relevance-based suggestions
-    (matching by shared entity/topic instead of literal text) are
-    Phase 8's job, not a place-holder here.
+    Phase 7 only had "other pages sorted by keyword-count priority" as
+    candidates, which is why this proposed 0 links on every one of the
+    32 pages generated so far -- an unrelated page's slug essentially
+    never appears in prose. src.analyze.linking now supplies real
+    relevance instead: SHOULD_LINK_TO edges built from actual connecting
+    relationships between clusters' entities (HAS_STYLE, FOR_OCCASION,
+    CO_OCCURS_WITH, ...), ranked by real gds.pageRank. See
+    src/analyze/linking.py for how those edges are built --
+    propose_anchor_links() here only reads them.
+
+    Zero proposed links stays the correct, honest answer when nothing
+    matches (CLAUDE.md rule 9) -- no invented anchor text, no link to a
+    page whose name doesn't actually appear in this draft.
     """
-    logger.info("[Agent] Step 6: Planning internal links with verbatim anchor text matching...")
+    logger.info("[Agent] Step 6: Planning internal links from real cross-cluster relevance...")
 
-    siblings = state.get("sibling_pages", [])
-    draft = state["draft"]
-    proposed_links = []
-
-    for sib in siblings:
-        phrase = sib.replace("-", " ")
-        if phrase.lower() in draft.lower():
-            proposed_links.append({
-                "target_slug": sib,
-                "anchor_text": phrase,
-                "relationship_reason": f"Verbatim mention of sibling topic '{phrase}' in the draft"
-            })
-
-    if not proposed_links:
-        logger.info(
-            "[Agent] 0 internal links proposed -- no sibling page name appears "
-            "verbatim in the draft. Expected; not an error."
-        )
+    db = DatabaseManager()
+    try:
+        proposed_links = propose_anchor_links(state["cluster_id"], state["draft"], db)
+    finally:
+        db.close()
 
     return {"links": proposed_links}
 
@@ -333,7 +325,7 @@ def persist_node(state: AgentState) -> Dict[str, Any]:
     # knowing about, not something to paper over with a guessed slug.
     existing = db.execute_query(
         "MATCH (p:Page)-[:COVERS]->(cl:Cluster {id: $cluster_id}) "
-        "RETURN p.url AS url, p.slug AS slug",
+        "RETURN p.url AS url, p.slug AS slug, p.page_type AS page_type",
         {"cluster_id": state["cluster_id"]},
     )
     if not existing:
@@ -343,11 +335,34 @@ def persist_node(state: AgentState) -> Dict[str, Any]:
             f"Run src/analyze/site_structure.py before generating pages."
         )
     slug = existing[0]["slug"]
+    url = existing[0]["url"]
+    page_type = existing[0]["page_type"]
 
     brief = state.get("brief") or {}
+    must_cover = brief.get("must_cover", [])
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
     file_path = os.path.join(output_dir, f"{slug}.md")
+
+    # Price is only ever real: extract_price() (src/analyze/structured_data.py)
+    # returns None unless this cluster's own evidence text contains an
+    # actual "$NNN", e.g. the anniversary-couple-gift vault note's "$210".
+    # Every other product simply has no offers block -- never invented
+    # (CLAUDE.md rule 9).
+    price = None
+    if page_type == "product":
+        evidence_text = "\n".join(p.get("passage", "") for p in state["evidence_passages"])
+        price = extract_price(evidence_text)
+
+    json_ld = build_json_ld(
+        page_type=page_type,
+        title=brief.get("h1", slug),
+        meta_description=brief.get("meta_description", ""),
+        url=url,
+        primary_keyword=brief.get("primary_keyword", ""),
+        entities=must_cover,
+        price=price,
+    )
 
     frontmatter = {
         "title": brief.get("h1"),
@@ -356,8 +371,10 @@ def persist_node(state: AgentState) -> Dict[str, Any]:
         "primary_keyword": brief.get("primary_keyword"),
         "intent": brief.get("intent"),
         "cluster_id": state["cluster_id"],
+        "page_type": page_type,
         "coverage_score": state.get("critique", {}).get("coverage_score", 1.0),
-        "internal_links": state.get("links", [])
+        "internal_links": state.get("links", []),
+        "json_ld": json_ld,
     }
 
     content_with_frontmatter = f"---\n{json.dumps(frontmatter, indent=2)}\n---\n\n{state['draft']}"

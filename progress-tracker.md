@@ -26,7 +26,7 @@ figurine domain.
 | 5 | Keywords + intent + the join | ✅ **Done — 76.2% coverage** |
 | 6 | Site structure from the graph | ✅ **Done — 32 clusters** |
 | 7 | The page-writing agent | ✅ **Done — 32/32 pages generated** |
-| 8 | Internal linking + structured data | ⬜ Not started |
+| 8 | Internal linking + structured data | ✅ **Done — 5 real links, JSON-LD on all 32 pages** |
 
 ---
 
@@ -225,20 +225,54 @@ explicit choice.
 
 ---
 
-## ⬜ Phase 8 — Not started
+## ✅ Phase 8 — Internal linking + structured data (DONE)
 
-**Internal linking + structured data**, his **task 4**:
-- `SHOULD_LINK_TO` relationships from shared entities / real PageRank
-  (today `plan_links_node` only does verbatim anchor-text matching
-  against sibling page names, and has proposed 0 links on every page
-  generated so far — this is the actual gap it needs to fill).
-- JSON-LD structured data per page type.
+His **task 4**. Two real gaps closed, both previously flagged as "Phase
+8's job" in the Phase 7 code itself:
+
+- [x] **8.1** — new `src/analyze/linking.py`: real `gds.pageRank` over
+      entity relationships (the TODO `clusters.py`'s own docstring left
+      open), aggregated onto `Page.pageRank`; `(:Page)-[:SHOULD_LINK_TO]->(:Page)`
+      built from actual connecting relationships between different
+      clusters' entities (`HAS_STYLE`, `FOR_OCCASION`, `CO_OCCURS_WITH`,
+      ...) — the literal "shared entities" signal, not a priority sort.
+      `propose_anchor_links()` then gates each candidate on its anchor
+      phrase actually appearing verbatim in the draft, same honesty
+      rule Phase 7's `plan_links_node` always had.
+- [x] **8.2** — new `src/analyze/structured_data.py`: JSON-LD per page
+      type (`Product` / `CollectionPage` / `BlogPosting` / `Article` /
+      `WebPage`) plus a `BreadcrumbList` on every page. Price is only
+      ever included when a real `$NNN` is found in that product's own
+      vault text (1 of 5 product pages qualifies — the other 4
+      correctly have no `offers` block, not an invented price).
+- [x] `plan_links_node` and `persist_node`
+      (`src/agents/page_graph.py`) rewired onto both — any future fresh
+      generation gets real links + JSON-LD automatically.
+- [x] Retired the now-dead `sibling_pages` field from
+      `src/agents/context.py` / `state.py` — it was only ever consumed
+      by the old verbatim-sibling-slug matcher this phase replaced.
+- [x] New `scripts/apply_internal_links_and_schema.py` retrofitted all
+      32 already-generated `output/*.md` pages with real links + JSON-LD
+      **without re-running the LLM** (frontmatter-only patch, draft
+      body untouched) — confirmed idempotent on a second run.
+
+```
+8 SHOULD_LINK_TO edges built; 5 survived the verbatim-anchor-text gate
+  and are now real internal links across 5 of the 32 pages -- most
+  clusters are genuinely independent topics (same sparsity clusters.py
+  found: most entities don't share keywords with anything else), so a
+  small, honest number of real links is the correct result, not a bug.
+32/32 pages now carry JSON-LD structured data
+1/5 product pages has a real price (personalized-anniversary-couple-
+  gift: $210, sourced from its own vault note) -- the other 4 have no
+  offers block at all, proving no price was invented.
+```
 
 ---
 
 ## What to do manually right now
 
-1. **Review Phase 6 and 7** on the `feature/keyword-graph-and-agent`
+1. **Review Phases 6-8** on the `feature/keyword-graph-and-agent`
    branch, and read a few of the 32 generated pages in `output/*.md` —
    nothing is merged to `main` or pushed yet.
 2. **Confirm 2 truncated URLs** against the live Getfiguro site and fill
@@ -255,12 +289,11 @@ explicit choice.
 .\run.ps1 browser
 ```
 
-See a generated page's cluster in Neo4j Browser:
+See the internal-link graph in Neo4j Browser:
 ```cypher
-MATCH (p:Page {draft_status: 'draft'})-[:COVERS]->(cl:Cluster)
-RETURN p, cl
+MATCH (p1:Page)-[r:SHOULD_LINK_TO]->(p2:Page)
+RETURN p1, r, p2
 ```
 
-The next decision is **Phase 8 scope** — real internal linking from
-shared entities, and how much structured-data markup to generate per
-page type.
+All 8 phases from the brief are now done on this branch. The remaining
+work is human review, not new pipeline code — see item 1 above.

@@ -7,6 +7,127 @@ Dates are absolute (YYYY-MM-DD).
 
 ---
 
+## [Phase 8 — Internal linking + structured data] — 2026-07-31
+
+Branch: `feature/keyword-graph-and-agent`. The mentor's **task 4**, and
+the last of the four. Phase 7 left two things explicitly deferred: real
+`SHOULD_LINK_TO` links (`plan_links_node` had proposed 0 links on every
+one of the 32 generated pages) and JSON-LD structured data (not started
+at all). Both close out here.
+
+### Added: real internal linking (new `src/analyze/linking.py`)
+- **`run_pagerank()`** — the real `gds.pageRank`, over every entity
+  relationship type (`HAS_STYLE`, `FOR_OCCASION`, ..., plus
+  `CO_OCCURS_WITH` from Phase 6), written to `e.pageRank` and summed
+  onto `Page.pageRank`. `clusters.py`'s own docstring had flagged this
+  as deferred ("internal linking is Phase 8's job and will use
+  `gds.pageRank` properly") — this is that.
+- **`build_should_link_to()`** — `(:Page)-[:SHOULD_LINK_TO]->(:Page)`
+  from real connecting relationships between *different* clusters'
+  entities. This is the literal "shared entities" signal Phase 7's
+  sibling list never was: a Pet product `HAS_STYLE` Realistic connects
+  the Pet cluster's page to the Realistic cluster's page. Ranked by
+  `(weight DESC, target.pageRank DESC)`, top 5 per page.
+- **`propose_anchor_links()`** — reads a page's `SHOULD_LINK_TO`
+  targets and only proposes a link when a real candidate phrase (the
+  target's primary keyword, lead entity, or cluster name) appears
+  verbatim in the draft. Same honesty rule Phase 7's `plan_links_node`
+  always had (no invented anchor text, zero links is a valid answer);
+  now backed by real relevance instead of an arbitrary priority sort.
+  Shared by both the live agent and the retrofit script below, so the
+  two logics can't drift apart.
+
+### Fixed: `gds.graph.project` rejected two of the configured relationship types
+`ALLOWED_RELATIONSHIPS` (`src/config.py`) includes `PAIRS_WITH` and
+`RELATES_TO`, but neither has ever been written to the graph —
+`accessories/` is deliberately empty (no product pairs with one yet)
+and no ingest path writes `RELATES_TO`. GDS's native projection syntax
+requires every relationship type to already exist in the store's token
+index, unlike a plain Cypher `type(r) IN [...]` check, and failed
+outright: `Invalid relationship projection, one or more relationship
+types not found`. Fixed by intersecting the configured type list
+against `CALL db.relationshipTypes()` before projecting, logging which
+configured types were skipped rather than silently succeeding on a
+different set than requested.
+
+### Added: JSON-LD structured data (new `src/analyze/structured_data.py`)
+- **`build_json_ld()`** — a `BreadcrumbList` on every page (derived
+  from the URL's own path segments) plus one type-specific block keyed
+  off `decide_page_type()`'s own output (`site_structure.py`):
+  `Product` / `CollectionPage` / `BlogPosting` / `Article` / `WebPage`.
+  `tool` pages deliberately get `WebPage`, not `WebApplication` — there
+  is no real interactive tool behind them yet, and claiming one would
+  be false markup.
+- **`extract_price()`** — a plain regex (`\$\d[\d,]*`) over an entity's
+  own evidence text; returns `None` if nothing matches. `offers` is
+  included in a Product's JSON-LD only when a real price was found
+  (CLAUDE.md rule 9 — no invented prices). Caught and fixed a regex
+  edge case during review: the greedy character class captured a
+  trailing sentence comma ("$210, sizes 10cm/...") as part of the
+  price; `build_json_ld()`'s own `.replace(",", "")` already cleaned
+  the persisted value, but `extract_price()` now strips it directly so
+  the raw return value is correct everywhere it's used, including the
+  retrofit script's own log output.
+
+### Wired up
+- `plan_links_node` and `persist_node` (`src/agents/page_graph.py`)
+  now call `propose_anchor_links()` / `build_json_ld()` directly — any
+  future fresh page generation gets real links and structured data
+  automatically, no separate step required.
+- Removed the `sibling_pages` field from `src/agents/context.py`,
+  `src/agents/state.py`, and `load_context_node`. It was only ever
+  consumed by the old verbatim-sibling-slug matcher this phase
+  replaced, and nothing else in the pipeline read it — left in place it
+  would have been exactly the kind of half-wired leftover CLAUDE.md
+  says not to keep.
+
+### Added: retrofit script (new `scripts/apply_internal_links_and_schema.py`)
+Patches all 32 already-generated `output/*.md` pages with real links
+and JSON-LD **without re-running the LLM** — only the frontmatter block
+is rewritten; the draft body is never touched. Re-running the full
+7-node agent per cluster just to pick up a links/schema patch would
+have cost 32 more Gemini calls for zero content change, so this reuses
+`fetch_agent_context()` (read-only, no LLM) plus the same
+`propose_anchor_links()` / `build_json_ld()` the live agent now uses.
+Confirmed idempotent: a second run produces byte-identical
+`SHOULD_LINK_TO`/`LINKS_TO` edge counts (`MERGE` guarantees no
+duplicates) and the same frontmatter.
+
+### Verified
+```
+python -m src.analyze.linking
+  -> PageRank: 83 entities scored over 20 iterations
+  -> SHOULD_LINK_TO: 8 edges written (top 5 per page, min weight 1)
+
+python -m scripts.apply_internal_links_and_schema
+  -> 5 of 8 SHOULD_LINK_TO candidates survived the verbatim-anchor-text
+     gate -- 5 real internal links across 5 of the 32 pages
+  -> 32/32 pages carry JSON-LD (BreadcrumbList + type-specific block)
+  -> 1/5 product pages (personalized-anniversary-couple-gift) has a
+     real offers.price ("210", sourced from its own vault note's
+     "$210"); the other 4 product pages correctly have no offers
+     block at all -- confirms no price was invented
+  -> re-run confirmed idempotent: same 5 LINKS_TO edges, no duplicates
+```
+A small link count is the expected result, not a shortfall — Phase 6's
+own clustering already found this dataset's entities are mostly
+genuinely independent topics (11 co-occurring pairs out of 82 entities);
+cross-cluster connections are similarly sparse, so 5 honest links beats
+a padded number produced by loosening the anchor-text gate.
+
+### Known follow-up
+- Link volume scales with how many taxonomy connections exist between
+  entities. The same lever Phase 5 used to raise keyword-join coverage
+  (adding `aliases:` to vault notes) applies here too: adding real
+  `styles:`/`occasions:`/etc. tags to more product notes would surface
+  more genuine `SHOULD_LINK_TO` candidates.
+- `PAIRS_WITH` and `RELATES_TO` remain unused (0 instances) — expected
+  per `data/vault/README.md` (`accessories/` deliberately empty), not a
+  bug. `run_pagerank()` already tolerates this and will pick them up
+  automatically once either is ever written.
+
+---
+
 ## [Phase 7 — The page-writing agent] — 2026-07-30
 
 Branch: `feature/keyword-graph-and-agent`. The mentor's **task 3**: a
